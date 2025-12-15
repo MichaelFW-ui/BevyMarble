@@ -1,0 +1,33 @@
+use bevy::prelude::*;
+
+use super::grid::TerritoryGrid;
+use super::render::*;
+use super::setup::*;
+use super::systems::*;
+
+pub struct TerritoryPlugin;
+
+impl Plugin for TerritoryPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(TerritoryGrid::new(1024, 1024))
+            .add_systems(Startup, (setup_grid_render, setup_initial_game))
+            .add_systems(
+                Update,
+                (
+                    spawn_units_from_events,
+                    machine_gun_rotate_fire,
+                    ciws_target_fire,
+                    bullet_move,
+                    bullet_hit_terrain,
+                    bullet_hit_units,
+                    bullet_bullet_collision,
+                    bigball_occupy_territory,
+                    bigball_collision,
+                    cleanup_depleted_units,
+                    check_victory,
+                    contain_units,
+                    update_grid_render,
+                ),
+            );
+    }
+}

@@ -1,0 +1,628 @@
+use avian2d::prelude::*;
+use bevy::prelude::*;
+use rand::Rng;
+
+use crate::colors::TeamColor;
+use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
+use super::components::*;
+use super::coords::{logic_to_render, render_to_logic, TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT};
+use super::grid::TerritoryGrid;
+
+const BIGBALL_RADIUS: f32 = 15.0;
+const BIGBALL_SPEED: f32 = 100.0;
+const BULLET_RADIUS: f32 = 3.0;
+const BULLET_SPEED: f32 = 250.0;
+const SHIELD_RADIUS: f32 = 50.0;
+
+/// 响应行动事件，生成对应单位
+pub fn spawn_units_from_events(
+    mut commands: Commands,
+    mut events: MessageReader<ActionEvent>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    grid: Res<TerritoryGrid>,
+) {
+    for event in events.read() {
+        let (start_x, start_y) = event.team.start_corner();
+        let corner_logic = grid.grid_to_logic(start_x, start_y);
+
+        // 往中心方向偏移，确保在边界内
+        let offset = Vec2::new(
+            if start_x == 0 { 50.0 } else { -50.0 },
+            if start_y == 0 { 50.0 } else { -50.0 },
+        );
+        let spawn_logic = corner_logic + offset;
+        let spawn_render = logic_to_render(spawn_logic);
+
+        match event.action_type {
+            ActionType::BigBall => {
+                spawn_bigball(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render, spawn_logic);
+            }
+            ActionType::Shield => {
+                // 护盾以HQ为中心
+                spawn_shield(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render, spawn_logic);
+            }
+            ActionType::MachineGun => {
+                // 机关枪在HQ中心
+                spawn_machine_gun(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render);
+            }
+            ActionType::CIWS => {
+                // CIWS在HQ中心
+                spawn_ciws(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render);
+            }
+        }
+    }
+}
+
+fn spawn_bigball(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    team: TeamColor,
+    size: u64,
+    render_position: Vec2,
+    logic_position: Vec2,
+) {
+    let mut rng = rand::thread_rng();
+    let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+    let velocity = Vec2::new(angle.cos(), angle.sin()) * BIGBALL_SPEED;
+
+    let mesh = meshes.add(Circle::new(BIGBALL_RADIUS));
+    let material = materials.add(team.to_color());
+
+    commands.spawn((
+        BigBall { team, size },
+        TerritoryUnit { team },
+        LogicPosition(logic_position),
+        LastLogicPosition(logic_position),
+        RigidBody::Dynamic,
+        Collider::circle(BIGBALL_RADIUS),
+        LinearVelocity(velocity),
+        Mass(size.min(1000) as f32),
+        Restitution::new(0.9),
+        GravityScale(0.0), // 右侧无重力
+        Mesh2d(mesh),
+        MeshMaterial2d(material),
+        Transform::from_translation(render_position.extend(1.0)),
+        CollisionEventsEnabled,
+    ));
+}
+
+fn spawn_shield(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    team: TeamColor,
+    durability: u64,
+    render_position: Vec2,
+    logic_position: Vec2,
+) {
+    let mesh = meshes.add(Circle::new(SHIELD_RADIUS));
+    let mut color = team.to_color();
+    color.set_alpha(0.3);
+    let material = materials.add(color);
+
+    commands.spawn((
+        Shield { team, durability, radius: SHIELD_RADIUS },
+        TerritoryUnit { team },
+        LogicPosition(logic_position),
+        Mesh2d(mesh),
+        MeshMaterial2d(material),
+        Transform::from_translation(render_position.extend(0.8)),
+    ));
+}
+
+fn spawn_machine_gun(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    team: TeamColor,
+    bullets: u64,
+    render_position: Vec2,
+) {
+    let mesh = meshes.add(Rectangle::new(15.0, 15.0));
+    let material = materials.add(team.to_color());
+
+    commands.spawn((
+        MachineGun {
+            team,
+            bullets,
+            fire_timer: Timer::from_seconds(0.2, TimerMode::Repeating),
+            rotation: 0.0,
+            rotation_speed: std::f32::consts::PI / 2.0,
+        },
+        TerritoryUnit { team },
+        Mesh2d(mesh),
+        MeshMaterial2d(material),
+        Transform::from_translation(render_position.extend(0.9)),
+    ));
+}
+
+fn spawn_ciws(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    team: TeamColor,
+    bullets: u64,
+    render_position: Vec2,
+) {
+    let mesh = meshes.add(Circle::new(10.0));
+    let material = materials.add(team.to_color());
+
+    commands.spawn((
+        CIWS {
+            team,
+            bullets,
+            fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+        },
+        TerritoryUnit { team },
+        Mesh2d(mesh),
+        MeshMaterial2d(material),
+        Transform::from_translation(render_position.extend(0.9)),
+    ));
+}
+
+/// 机关枪旋转射击
+pub fn machine_gun_rotate_fire(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut machine_guns: Query<(&mut MachineGun, &Transform)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let delta = time.delta_secs();
+
+    for (mut gun, gun_transform) in machine_guns.iter_mut() {
+        gun.rotation += gun.rotation_speed * delta;
+
+        // 计算这一帧应该发射多少颗子弹
+        let fire_interval = gun.fire_timer.duration().as_secs_f32();
+        let bullets_to_fire = (delta / fire_interval) as u64;
+
+        for _ in 0..bullets_to_fire.min(gun.bullets) {
+            gun.bullets -= 1;
+
+            let direction = Vec2::new(gun.rotation.cos(), gun.rotation.sin());
+            spawn_bullet(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                gun.team,
+                1,
+                gun_transform.translation.truncate(),
+                direction,
+            );
+
+            // 每颗子弹旋转一点
+            gun.rotation += 0.1;
+        }
+    }
+}
+
+/// 近防炮瞄准最近敌人射击
+pub fn ciws_target_fire(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut ciws_query: Query<(&mut CIWS, &Transform)>,
+    targets: Query<(&TerritoryUnit, &Transform), Or<(With<BigBall>, With<Bullet>)>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (mut ciws, ciws_transform) in ciws_query.iter_mut() {
+        ciws.fire_timer.tick(time.delta());
+
+        if !ciws.fire_timer.just_finished() || ciws.bullets == 0 {
+            continue;
+        }
+
+        let ciws_pos = ciws_transform.translation.truncate();
+        let mut closest: Option<(Vec2, f32)> = None;
+
+        for (unit, target_transform) in targets.iter() {
+            if unit.team == ciws.team {
+                continue;
+            }
+
+            let target_pos = target_transform.translation.truncate();
+            let distance = ciws_pos.distance(target_pos);
+
+            if closest.is_none() || distance < closest.unwrap().1 {
+                closest = Some((target_pos, distance));
+            }
+        }
+
+        if let Some((target_pos, _)) = closest {
+            ciws.bullets -= 1;
+            let direction = (target_pos - ciws_pos).normalize();
+            spawn_bullet(&mut commands, &mut meshes, &mut materials, ciws.team, 1, ciws_pos, direction);
+        }
+    }
+}
+
+fn spawn_bullet(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    team: TeamColor,
+    value: u64,
+    render_position: Vec2,
+    direction: Vec2,
+) {
+    let velocity = direction * BULLET_SPEED;
+    let mesh = meshes.add(Circle::new(BULLET_RADIUS));
+    let material = materials.add(team.to_color());
+
+    let logic_pos = render_to_logic(render_position);
+
+    commands.spawn((
+        Bullet { team, value },
+        LogicPosition(logic_pos),
+        LastLogicPosition(logic_pos),
+        RigidBody::Dynamic,
+        Collider::circle(BULLET_RADIUS),
+        LinearVelocity(velocity),
+        GravityScale(0.0),
+        Mass(1.0), // 必须有质量
+        Mesh2d(mesh),
+        MeshMaterial2d(material),
+        Transform::from_translation(render_position.extend(1.5)),
+    ));
+}
+
+/// 子弹边界反射（考虑半径）
+pub fn bullet_move(
+    mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
+) {
+    let bullet_logic_radius = BULLET_RADIUS * TERRITORY_LOGIC_WIDTH / 800.0;
+
+    for (mut transform, mut velocity) in bullets.iter_mut() {
+        let logic_pos = render_to_logic(transform.translation.truncate());
+
+        // 检测逻辑边界并反射（考虑半径）
+        if logic_pos.x <= bullet_logic_radius {
+            velocity.0.x = velocity.0.x.abs();
+            let render_pos = logic_to_render(Vec2::new(bullet_logic_radius, logic_pos.y));
+            transform.translation.x = render_pos.x;
+        } else if logic_pos.x >= TERRITORY_LOGIC_WIDTH - bullet_logic_radius {
+            velocity.0.x = -velocity.0.x.abs();
+            let render_pos = logic_to_render(Vec2::new(TERRITORY_LOGIC_WIDTH - bullet_logic_radius, logic_pos.y));
+            transform.translation.x = render_pos.x;
+        }
+
+        if logic_pos.y <= bullet_logic_radius {
+            velocity.0.y = velocity.0.y.abs();
+            let render_pos = logic_to_render(Vec2::new(logic_pos.x, bullet_logic_radius));
+            transform.translation.y = render_pos.y;
+        } else if logic_pos.y >= TERRITORY_LOGIC_HEIGHT - bullet_logic_radius {
+            velocity.0.y = -velocity.0.y.abs();
+            let render_pos = logic_to_render(Vec2::new(logic_pos.x, TERRITORY_LOGIC_HEIGHT - bullet_logic_radius));
+            transform.translation.y = render_pos.y;
+        }
+    }
+}
+
+/// 子弹击中地形 - 使用Bresenham追踪路径
+pub fn bullet_hit_terrain(
+    mut commands: Commands,
+    mut grid: ResMut<TerritoryGrid>,
+    mut bullets: Query<(Entity, &mut Bullet, &Transform, &mut LastLogicPosition)>,
+) {
+    for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
+        let current_logic = render_to_logic(transform.translation.truncate());
+
+        // 跳过第一帧（子弹还没移动）
+        if last_pos.0 == current_logic {
+            continue;
+        }
+
+        if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_pos.0), grid.logic_to_grid(current_logic)) {
+            // 跳过起点，只染路径上的新格子
+            let points = bresenham_line(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+
+            for (x, y) in points.into_iter().skip(1) {
+                if bullet.value == 0 {
+                    break;
+                }
+
+                if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
+                    let cell_team = grid.get(x as u32, y as u32);
+
+                    // 只有空白或敌方领土才染色并消耗
+                    if cell_team != Some(bullet.team) {
+                        grid.set(x as u32, y as u32, Some(bullet.team));
+                        bullet.value = bullet.value.saturating_sub(1);
+                    }
+                }
+            }
+
+            if bullet.value == 0 {
+                commands.entity(entity).despawn();
+            }
+        }
+
+        last_pos.0 = current_logic;
+    }
+}
+
+/// 子弹击中单位
+pub fn bullet_hit_units(
+    mut commands: Commands,
+    mut collision_events: MessageReader<CollisionStart>,
+    bullets: Query<(&Bullet, Entity)>,
+    mut bigballs: Query<(&mut BigBall, Entity)>,
+    mut shields: Query<(&mut Shield, Entity)>,
+    hqs: Query<(&HQ, Entity)>,
+    mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
+    mut victory_events: MessageWriter<VictoryEvent>,
+) {
+    for event in collision_events.read() {
+        let (bullet_entity, target_entity) = if bullets.contains(event.collider1) {
+            (event.collider1, event.collider2)
+        } else if bullets.contains(event.collider2) {
+            (event.collider2, event.collider1)
+        } else {
+            continue;
+        };
+
+        if let Ok((bullet, _)) = bullets.get(bullet_entity) {
+            // 检查HQ
+            if let Ok((hq, _)) = hqs.get(target_entity) {
+                if hq.team != bullet.team {
+                    commands.entity(bullet_entity).despawn();
+                    victory_events.write(VictoryEvent { winner: bullet.team });
+                    continue;
+                }
+            }
+
+            // 检查大球
+            if let Ok((mut ball, ball_entity)) = bigballs.get_mut(target_entity) {
+                if ball.team != bullet.team {
+                    let damage = bullet.value.min(ball.size);
+                    ball.size -= damage;
+                    commands.entity(bullet_entity).despawn();
+
+                    if ball.size == 0 {
+                        commands.entity(ball_entity).despawn();
+                        destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity: ball_entity });
+                    }
+                    continue;
+                }
+            }
+
+            // 检查护盾
+            if let Ok((mut shield, shield_entity)) = shields.get_mut(target_entity) {
+                if shield.team != bullet.team {
+                    let damage = bullet.value.min(shield.durability);
+                    shield.durability -= damage;
+                    commands.entity(bullet_entity).despawn();
+
+                    if shield.durability == 0 {
+                        commands.entity(shield_entity).despawn();
+                        destroyed_events.write(UnitDestroyedEvent { team: shield.team, entity: shield_entity });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 子弹与子弹碰撞
+pub fn bullet_bullet_collision(
+    mut commands: Commands,
+    mut collision_events: MessageReader<CollisionStart>,
+    mut bullets: Query<(&mut Bullet, Entity)>,
+) {
+    for event in collision_events.read() {
+        // 使用 get_many_mut 避免同时借用冲突
+        if let Ok([(mut bullet1, entity1), (mut bullet2, entity2)]) =
+            bullets.get_many_mut([event.collider1, event.collider2]) {
+
+            if bullet1.team != bullet2.team {
+                if bullet1.value > bullet2.value {
+                    bullet1.value -= bullet2.value;
+                    commands.entity(entity2).despawn();
+                } else if bullet2.value > bullet1.value {
+                    bullet2.value -= bullet1.value;
+                    commands.entity(entity1).despawn();
+                } else {
+                    commands.entity(entity1).despawn();
+                    commands.entity(entity2).despawn();
+                }
+            }
+        }
+    }
+}
+
+/// 大球占领格子 + 同步逻辑坐标
+pub fn bigball_occupy_territory(
+    mut grid: ResMut<TerritoryGrid>,
+    mut bigballs: Query<(&mut BigBall, &Transform, &mut LogicPosition, &mut LastLogicPosition)>,
+    shields: Query<(&Shield, &LogicPosition), Without<BigBall>>,
+) {
+    let shield_data: Vec<_> = shields.iter()
+        .map(|(shield, logic_pos)| (logic_pos.0, shield.radius, shield.team))
+        .collect();
+
+    // 计算大球在格子坐标系中的半径
+    let ball_grid_radius = (BIGBALL_RADIUS * grid.width as f32 / TERRITORY_LOGIC_WIDTH) as i32;
+
+    for (mut ball, transform, mut logic_pos, mut last_logic_pos) in bigballs.iter_mut() {
+        // 更新逻辑坐标
+        logic_pos.0 = render_to_logic(transform.translation.truncate());
+        let current_pos = logic_pos.0;
+
+        if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
+            let points = bresenham_line(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+
+            for (cx, cy) in points {
+                // 对于路径上的每个点，占领以它为中心的圆形区域
+                for dy in -ball_grid_radius..=ball_grid_radius {
+                    for dx in -ball_grid_radius..=ball_grid_radius {
+                        // 检查是否在圆形范围内
+                        if dx * dx + dy * dy <= ball_grid_radius * ball_grid_radius {
+                            let x = cx + dx;
+                            let y = cy + dy;
+
+                            if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
+                                if grid.occupy(x as u32, y as u32, ball.team, &shield_data) {
+                                    if ball.size > 0 {
+                                        ball.size -= 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        last_logic_pos.0 = current_pos;
+    }
+}
+
+fn bresenham_line(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
+    let mut points = Vec::new();
+    let dx = (x1 - x0).abs();
+    let dy = (y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+    let mut x = x0;
+    let mut y = y0;
+
+    loop {
+        points.push((x, y));
+        if x == x1 && y == y1 { break; }
+        let e2 = 2 * err;
+        if e2 > -dy { err -= dy; x += sx; }
+        if e2 < dx { err += dx; y += sy; }
+    }
+    points
+}
+
+/// 大球碰撞（动量守恒+损失数值）
+pub fn bigball_collision(
+    mut collision_events: MessageReader<CollisionStart>,
+    mut bigballs: Query<(&mut BigBall, &mut LinearVelocity, &Mass)>,
+) {
+    for event in collision_events.read() {
+        // 使用 get_many_mut 避免同时借用冲突
+        if let Ok([(mut ball1, mut vel1, mass1), (mut ball2, mut vel2, mass2)]) =
+            bigballs.get_many_mut([event.collider1, event.collider2]) {
+
+            if ball1.team != ball2.team {
+                // 简单的弹性碰撞（动量守恒）
+                let v1 = vel1.0;
+                let v2 = vel2.0;
+                let m1 = mass1.0;
+                let m2 = mass2.0;
+
+                vel1.0 = ((m1 - m2) * v1 + 2.0 * m2 * v2) / (m1 + m2);
+                vel2.0 = ((m2 - m1) * v2 + 2.0 * m1 * v1) / (m1 + m2);
+
+                // 碰撞损失数值
+                ball1.size = ball1.size.saturating_sub(ball2.size / 10);
+                ball2.size = ball2.size.saturating_sub(ball1.size / 10);
+            }
+        }
+    }
+}
+
+/// 清理耗尽的单位
+pub fn cleanup_depleted_units(
+    mut commands: Commands,
+    bigballs: Query<(Entity, &BigBall)>,
+    machine_guns: Query<(Entity, &MachineGun)>,
+    ciws_query: Query<(Entity, &CIWS)>,
+    mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
+) {
+    for (entity, ball) in bigballs.iter() {
+        if ball.size == 0 {
+            commands.entity(entity).despawn();
+            destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity });
+        }
+    }
+
+    for (entity, gun) in machine_guns.iter() {
+        if gun.bullets == 0 {
+            commands.entity(entity).despawn();
+            destroyed_events.write(UnitDestroyedEvent { team: gun.team, entity });
+        }
+    }
+
+    for (entity, ciws) in ciws_query.iter() {
+        if ciws.bullets == 0 {
+            commands.entity(entity).despawn();
+            destroyed_events.write(UnitDestroyedEvent { team: ciws.team, entity });
+        }
+    }
+}
+
+/// 检测胜利
+pub fn check_victory(
+    units: Query<&TerritoryUnit>,
+    mut victory_events: MessageWriter<VictoryEvent>,
+) {
+    let mut team_counts = [0u32; 4];
+
+    for unit in units.iter() {
+        let index = match unit.team {
+            TeamColor::Red => 0,
+            TeamColor::Blue => 1,
+            TeamColor::Green => 2,
+            TeamColor::Yellow => 3,
+        };
+        team_counts[index] += 1;
+    }
+
+    let alive_teams: Vec<_> = team_counts.iter().enumerate()
+        .filter(|&(_, count)| *count > 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    if alive_teams.len() == 1 {
+        let winner = match alive_teams[0] {
+            0 => TeamColor::Red,
+            1 => TeamColor::Blue,
+            2 => TeamColor::Green,
+            3 => TeamColor::Yellow,
+            _ => unreachable!(),
+        };
+        victory_events.write(VictoryEvent { winner });
+    }
+}
+
+/// 限制单位在战场范围内 + 边界弹性反弹
+pub fn contain_units(
+    mut bigballs: Query<(&mut Transform, &mut LogicPosition, &mut LinearVelocity), With<BigBall>>,
+) {
+    // 大球逻辑半径
+    let ball_logic_radius = BIGBALL_RADIUS * TERRITORY_LOGIC_WIDTH / 800.0;
+
+    for (mut transform, mut logic_pos, mut velocity) in bigballs.iter_mut() {
+        // 更新逻辑坐标
+        logic_pos.0 = render_to_logic(transform.translation.truncate());
+
+        // 边界反弹（考虑球的半径）
+        if logic_pos.0.x <= ball_logic_radius {
+            velocity.0.x = velocity.0.x.abs();
+            logic_pos.0.x = ball_logic_radius;
+        } else if logic_pos.0.x >= TERRITORY_LOGIC_WIDTH - ball_logic_radius {
+            velocity.0.x = -velocity.0.x.abs();
+            logic_pos.0.x = TERRITORY_LOGIC_WIDTH - ball_logic_radius;
+        }
+
+        if logic_pos.0.y <= ball_logic_radius {
+            velocity.0.y = velocity.0.y.abs();
+            logic_pos.0.y = ball_logic_radius;
+        } else if logic_pos.0.y >= TERRITORY_LOGIC_HEIGHT - ball_logic_radius {
+            velocity.0.y = -velocity.0.y.abs();
+            logic_pos.0.y = TERRITORY_LOGIC_HEIGHT - ball_logic_radius;
+        }
+
+        // 更新渲染位置
+        let render_pos = logic_to_render(logic_pos.0);
+        transform.translation.x = render_pos.x;
+        transform.translation.y = render_pos.y;
+    }
+}
