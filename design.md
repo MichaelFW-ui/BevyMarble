@@ -31,7 +31,7 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 
 ### 3.1 顶层模块
 
-- `src/main.rs`：应用装配（窗口、物理、重力、消息、插件注册）、相机生成。
+- `src/main.rs`：应用装配（窗口、物理、重力、消息、插件注册）、**双相机分屏**（Viewport）与渲染层隔离（RenderLayers）。
 - `src/colors.rs`：`TeamColor`（队伍枚举）、显示色、起始角落等通用逻辑。
 - `src/events.rs`：跨模块通信的消息类型：
   - `ActionEvent`：弹珠机选择结果 → 驱动战场生成单位。
@@ -47,12 +47,13 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 - `components.rs`：弹珠机侧组件定义：
   - `Marble`（队伍与数值）、`MultiplierZone`（加倍区）、`ActionZone`（行动选择区）等。
 - `layout.rs`：弹珠机“关卡/摆放”生成（墙、钉子、加倍区、行动区、四队出生点）。
-  - 关键常量：`PINBALL_WIDTH/HEIGHT`、`PINBALL_OFFSET_X`（左侧偏移）。
+  - 关键常量：`PINBALL_WIDTH/HEIGHT`（弹珠机逻辑空间尺寸）。
 - `systems.rs`：运行时逻辑：
   - 生成初始弹珠（`spawn_initial_marbles`）
   - 处理碰撞：进入加倍区翻倍（`check_multiplier_collision`）；进入行动区发送 `ActionEvent` 并重置弹珠（`check_action_zone_collision`）
   - 安全回收：离开区域则传送回出生点（`contain_marbles`）
   - UI 同步：根据数值更新弹珠大小与文本（`update_marble_display`、`sync_marble_text_position`）
+  - 防卡死：检测长期几乎不动的弹珠并给予向上升力（`assist_stuck_marbles`）
 - `utils.rs`：数值显示与半径映射（`format_value`、`calculate_radius`、`MAX_VALUE`）。
 
 ### 3.3 Territory（右侧领土战场）
@@ -62,6 +63,8 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 - `mod.rs`：模块导出（`pub use TerritoryPlugin;`）。
 - `plugin.rs`：`TerritoryPlugin` 组合战场资源与系统：
   - 注入 `TerritoryGrid` 资源
+  - 注入战场开关 `TerritorySettings`（例如是否启用“子弹-子弹碰撞”）
+  - 初始化逻辑侧加速结构：`TargetSpatialIndex`（CIWS找最近目标）、`BulletPaintKernel`（子弹覆盖查表）
   - `Startup`：初始化网格渲染与开局单位
   - `Update`：战斗、占领、渲染更新与胜负判定等
 - `components.rs`：战场侧组件定义：
@@ -70,8 +73,8 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
   - 空间：`LogicPosition`、`LastLogicPosition`
   - 物理层：`GameLayer` + `TeamColor::to_layer()/enemy_layers()`
 - `grid.rs`：`TerritoryGrid` 资源（1024×1024），负责“格子归属”的读写与占领规则（含护盾半径保护判定）。
-- `coords.rs`：战场**逻辑坐标** ↔ **渲染坐标** ↔ **网格索引**的转换函数与常量。
-- `render.rs`：把 `TerritoryGrid` 渲染为一张 `Image`（纹理），用 `Sprite` 显示，并在网格变化时增量更新像素。
+- `coords.rs`：战场**纯游戏空间**（逻辑空间）与**网格索引**的转换函数与常量（不再依赖任何渲染尺寸/屏幕偏移）。
+- `render.rs`：把 `TerritoryGrid` 渲染为一张 `Image`（纹理），用 `Sprite` 显示（渲染层，使用 `RenderLayers` 与右侧相机匹配）。
 - `setup.rs`：开局初始化：每队生成 HQ、初始机枪/近防炮。
 - `systems.rs`：运行时逻辑（核心战斗循环）：
   - 消费 `ActionEvent` 生成单位（`spawn_units_from_events`）
@@ -80,6 +83,7 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
   - 大球：沿路径占领格子（`bigball_occupy_territory`）、敌方大球碰撞（`bigball_collision`）、边界反弹（`contain_units`）
   - 生命周期：清理耗尽单位并发 `UnitDestroyedEvent`（`cleanup_depleted_units`）
   - 胜负：仅剩一个队伍存活或 HQ 被击中（`check_victory` / `bullet_hit_units` 内写入 `VictoryEvent`）
+  - 表现：子弹渲染为三角形并随速度方向旋转（`sync_bullet_rotation_to_velocity`）；大球显示当前数值（`BigBallValueText` + `update_bigball_value_text`）
 
 ## 4. 组合方式（“怎么拼起来跑的”）
 
@@ -93,7 +97,9 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 6. 加载业务插件：
    - `PinballPlugin`：生成弹珠机关卡 + 每帧处理弹珠碰撞与 UI
    - `TerritoryPlugin`：网格与战斗系统
-7. `Startup` 阶段生成 `Camera2d`
+7. `Startup` 阶段生成 **两台 2D 相机**：
+   - 左相机：Viewport 覆盖窗口左侧，仅渲染 `RenderLayers::layer(0)`（Pinball）
+   - 右相机：Viewport 覆盖窗口右侧，仅渲染 `RenderLayers::layer(1)`（Territory）
 
 从依赖关系看：
 
@@ -106,6 +112,9 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 
 - `Gravity`（物理世界重力）
 - `TerritoryGrid`（战场占领网格）
+- `TerritorySettings`（战场规则/性能开关，例如子弹-子弹碰撞开关）
+- `TargetSpatialIndex`（CIWS 最近目标查询的空间索引）
+- `BulletPaintKernel`（子弹染色覆盖的圆形 offset 查表）
 - `Assets<Mesh> / Assets<ColorMaterial> / Assets<Image>` 等渲染资源
 
 ### 5.2 实体与组件（Entity + Component）
@@ -124,12 +133,16 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 
 ## 6. 坐标与屏幕布局
 
-本项目把屏幕左右分成两个逻辑区域：
+本项目采用 **强隔离** 的坐标与布局原则：
 
-- 左侧弹珠机：`PINBALL_OFFSET_X = -400.0`，宽 `400`，高 `800`（见 `src/pinball/layout.rs`）。
-- 右侧战场：逻辑坐标系为 `1024×1024`，渲染区域为 `800×800`，并整体向右偏移 `TERRITORY_RENDER_OFFSET_X = 200.0`（见 `src/territory/coords.rs`）。
+- **游戏空间（Game Space）**：用于物理、碰撞、AI、占领等一切游戏逻辑；不引用像素尺寸、不引用屏幕偏移、不依赖窗口大小。
+  - Pinball 的游戏空间尺寸由 `PINBALL_WIDTH/HEIGHT` 定义（见 `src/pinball/layout.rs`），整体以原点居中。
+  - Territory 的游戏空间尺寸由 `TERRITORY_LOGIC_WIDTH/HEIGHT` 定义（见 `src/territory/coords.rs`），整体以原点居中，网格坐标与该空间直接换算。
+- **渲染空间（Render/Viewport）**：只负责“画面怎么摆”和“渲染哪些实体”。
+  - 左右分屏通过 `Camera.viewport` 实现（`src/main.rs`）。
+  - Pinball/ Territory 的实体通过 `RenderLayers` 分层，分别只被对应相机渲染。
 
-战场单位的“物理/渲染位置”主要在渲染坐标中运动，但占领/边界等规则在逻辑坐标/网格坐标中计算，通过 `logic_to_render` / `render_to_logic` 做同步。
+这使得：改变窗口分辨率、分屏比例或相机缩放不会改变游戏规则，只会改变画面呈现。
 
 ## 7. 扩展方式（如何加新功能）
 
@@ -145,3 +158,6 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 
 优先放在对应模块的 `systems.rs` 中，并在该模块的 `plugin.rs` 里通过 `.add_systems(Startup/Update, ...)` 注册；需要顺序关系时使用 `.after(...)`（项目中 Pinball 的生成顺序已有示例）。
 
+### 7.3 新增“可开关的规则/性能选项”
+
+把开关放在资源 `TerritorySettings`（见 `src/territory/plugin.rs`），系统通过 `Res<TerritorySettings>` 读取后决定是否执行（例如 `bullet_bullet_collision` 可开关）。
