@@ -14,6 +14,13 @@ pub enum GameLayer {
     YellowTeam,
 }
 
+pub const TEAM_LAYERS: [GameLayer; 4] = [
+    GameLayer::RedTeam,
+    GameLayer::BlueTeam,
+    GameLayer::GreenTeam,
+    GameLayer::YellowTeam,
+];
+
 impl TeamColor {
     /// 获取队伍对应的碰撞层
     pub fn to_layer(&self) -> GameLayer {
@@ -95,3 +102,7 @@ pub struct LogicPosition(pub Vec2);
 /// 上一帧的逻辑位置（用于追踪大球移动轨迹）
 #[derive(Component, Debug, Clone, Copy)]
 pub struct LastLogicPosition(pub Vec2);
+
+/// 大球数值文本标记（作为大球的子实体）
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BigBallValueText;

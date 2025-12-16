@@ -27,6 +27,7 @@ impl Plugin for TerritoryPlugin {
                     check_victory,
                     contain_units,
                     update_grid_render,
+                    update_bigball_value_text,
                 ),
             );
     }

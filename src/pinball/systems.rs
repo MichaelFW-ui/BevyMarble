@@ -8,6 +8,11 @@ use super::components::*;
 use super::layout::{PINBALL_OFFSET_X, PINBALL_HEIGHT};
 use super::utils::{calculate_radius, format_value};
 
+const STUCK_TIME_SECS: f32 = 1.5;
+const STUCK_MOVE_EPS: f32 = 0.8;
+const STUCK_SPEED_EPS: f32 = 5.0;
+const STUCK_LIFT_SPEED: f32 = 420.0;
+
 /// 生成初始弹珠
 pub fn spawn_initial_marbles(
     mut commands: Commands,
@@ -47,6 +52,7 @@ fn spawn_marble(
 
     let marble_entity = commands.spawn((
         marble.clone(),
+        StuckMarbleTracker { last_pos: position, still_time: 0.0 },
         RigidBody::Dynamic,
         Collider::circle(radius),
         Restitution::new(0.6), // 弹性
@@ -71,6 +77,39 @@ fn spawn_marble(
         TextColor(Color::WHITE),
         Transform::from_translation(position.extend(1.0)),
     ));
+}
+
+/// 检测长期几乎不动的弹珠，给一个向上的升力避免卡死
+pub fn assist_stuck_marbles(
+    time: Res<Time>,
+    mut marbles: Query<(&Transform, &mut LinearVelocity, &mut StuckMarbleTracker), With<Marble>>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
+    let mut rng = rand::thread_rng();
+
+    for (transform, mut velocity, mut tracker) in marbles.iter_mut() {
+        let pos = transform.translation.truncate();
+        let moved = pos.distance(tracker.last_pos);
+        let speed = velocity.0.length();
+
+        if moved < STUCK_MOVE_EPS && speed < STUCK_SPEED_EPS {
+            tracker.still_time += dt;
+        } else {
+            tracker.still_time = 0.0;
+            tracker.last_pos = pos;
+        }
+
+        if tracker.still_time >= STUCK_TIME_SECS {
+            velocity.0.y = velocity.0.y.max(STUCK_LIFT_SPEED);
+            velocity.0.x += rng.gen_range(-60.0..60.0);
+            tracker.still_time = 0.0;
+            tracker.last_pos = pos;
+        }
+    }
 }
 
 /// 检测弹珠进入加倍区域

@@ -63,3 +63,10 @@ pub struct PinballSpawnPoint {
 pub struct MarbleText {
     pub marble_entity: Entity,
 }
+
+/// 弹珠卡住检测（用于给一个“救援升力”避免长期静止）
+#[derive(Component, Debug, Clone, Copy)]
+pub struct StuckMarbleTracker {
+    pub last_pos: Vec2,
+    pub still_time: f32,
+}

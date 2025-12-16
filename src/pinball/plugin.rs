@@ -18,6 +18,7 @@ impl Plugin for PinballPlugin {
                     check_multiplier_collision,
                     check_action_zone_collision,
                     contain_marbles,
+                    assist_stuck_marbles,
                     update_marble_display,
                     sync_marble_text_position,
                 ),

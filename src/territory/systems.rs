@@ -4,6 +4,7 @@ use rand::Rng;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
+use crate::pinball::format_value;
 use super::components::*;
 use super::coords::{logic_to_render, render_to_logic, TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT};
 use super::grid::TerritoryGrid;
@@ -22,7 +23,10 @@ pub fn spawn_units_from_events(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     grid: Res<TerritoryGrid>,
+    asset_server: Res<AssetServer>,
 ) {
+    let ui_font: Handle<Font> = asset_server.load("fonts/FiraSans-Bold.ttf");
+
     for event in events.read() {
         let (start_x, start_y) = event.team.start_corner();
         let corner_logic = grid.grid_to_logic(start_x, start_y);
@@ -37,7 +41,16 @@ pub fn spawn_units_from_events(
 
         match event.action_type {
             ActionType::BigBall => {
-                spawn_bigball(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render, spawn_logic);
+                spawn_bigball(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    &ui_font,
+                    event.team,
+                    event.value,
+                    spawn_render,
+                    spawn_logic,
+                );
             }
             ActionType::Shield => {
                 // 护盾以HQ为中心
@@ -59,6 +72,7 @@ fn spawn_bigball(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
+    ui_font: &Handle<Font>,
     team: TeamColor,
     size: u64,
     render_position: Vec2,
@@ -71,7 +85,7 @@ fn spawn_bigball(
     let mesh = meshes.add(Circle::new(BIGBALL_RADIUS));
     let material = materials.add(team.to_color());
 
-    commands.spawn((
+    let ball_entity = commands.spawn((
         BigBall { team, size },
         TerritoryUnit { team },
         LogicPosition(logic_position),
@@ -79,7 +93,7 @@ fn spawn_bigball(
         RigidBody::Dynamic,
         Collider::circle(BIGBALL_RADIUS),
         // 只与敌方碰撞
-        CollisionLayers::new([team.to_layer()], team.enemy_layers()),
+        CollisionLayers::new([team.to_layer()], TEAM_LAYERS),
         LinearVelocity(velocity),
         Mass(size.min(1000) as f32),
         Restitution::new(0.9),
@@ -88,7 +102,21 @@ fn spawn_bigball(
         MeshMaterial2d(material),
         Transform::from_translation(render_position.extend(1.0)),
         CollisionEventsEnabled,
-    ));
+    )).id();
+
+    commands.entity(ball_entity).with_children(|parent| {
+        parent.spawn((
+            BigBallValueText,
+            Text2d::new(format_value(size)),
+            TextFont {
+                font: ui_font.clone(),
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Transform::from_translation(Vec3::new(0.0, BIGBALL_RADIUS + 10.0, 1.0)),
+        ));
+    });
 }
 
 fn spawn_shield(
@@ -661,5 +689,21 @@ pub fn contain_units(
         let render_pos = logic_to_render(logic_pos.0);
         transform.translation.x = render_pos.x;
         transform.translation.y = render_pos.y;
+    }
+}
+
+/// 更新大球数值文本（K/M/B）显示
+pub fn update_bigball_value_text(
+    bigballs: Query<(Entity, &BigBall, Option<&Children>), Changed<BigBall>>,
+    mut texts: Query<&mut Text2d, With<BigBallValueText>>,
+) {
+    for (_ball_entity, ball, children) in bigballs.iter() {
+        let Some(children) = children else { continue; };
+        let value = format_value(ball.size);
+        for child in children.iter() {
+            if let Ok(mut text) = texts.get_mut(child) {
+                text.0 = value.clone();
+            }
+        }
     }
 }
