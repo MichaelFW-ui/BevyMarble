@@ -18,9 +18,12 @@ pub fn spawn_pinball_layout(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let wall_color = materials.add(Color::srgb(0.3, 0.3, 0.4));
     let peg_color = materials.add(Color::srgb(0.5, 0.5, 0.6));
+
+    let ui_font: Handle<Font> = asset_server.load("fonts/FiraSans-Bold.ttf");
 
     // 左边界墙
     spawn_wall(
@@ -62,13 +65,32 @@ pub fn spawn_pinball_layout(
     spawn_pegs(&mut commands, &mut meshes, peg_color, &mut materials);
 
     // 生成加倍区域
-    spawn_multiplier_zones(&mut commands, &mut meshes, &mut materials);
+    spawn_multiplier_zones(&mut commands, &mut meshes, &mut materials, &ui_font);
 
     // 生成行动选择区域
-    spawn_action_zones(&mut commands, &mut meshes, &mut materials);
+    spawn_action_zones(&mut commands, &mut meshes, &mut materials, &ui_font);
 
     // 生成四个颜色的小球起始点
     spawn_marble_spawn_points(&mut commands);
+}
+
+fn spawn_zone_label(
+    commands: &mut Commands,
+    text: impl Into<String>,
+    position: Vec3,
+    font: &Handle<Font>,
+    font_size: f32,
+) {
+    commands.spawn((
+        Text2d::new(text),
+        TextFont {
+            font: font.clone(),
+            font_size,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Transform::from_translation(position),
+    ));
 }
 
 fn spawn_wall(
@@ -133,12 +155,14 @@ fn spawn_multiplier_zones(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
+    ui_font: &Handle<Font>,
 ) {
     let zone_mesh = meshes.add(Rectangle::new(ZONE_WIDTH, ZONE_HEIGHT));
 
     // x2 区域（两个，在中层两侧）
     let x2_color = materials.add(Color::srgba(0.2, 0.8, 0.2, 0.5));
     for x_offset in [-100.0, 100.0] {
+        let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, -50.0, 0.2);
         commands.spawn((
             MultiplierZone { multiplier: 2 },
             Collider::rectangle(ZONE_WIDTH, ZONE_HEIGHT),
@@ -151,10 +175,12 @@ fn spawn_multiplier_zones(
                 0.1,
             )),
         ));
+        spawn_zone_label(commands, "x2", zone_center, ui_font, 18.0);
     }
 
     // x4 区域（中间，更低）
     let x4_color = materials.add(Color::srgba(0.8, 0.6, 0.2, 0.5));
+    let x4_center = Vec3::new(PINBALL_OFFSET_X, -50.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 4 },
         Collider::rectangle(ZONE_WIDTH, ZONE_HEIGHT),
@@ -163,10 +189,12 @@ fn spawn_multiplier_zones(
         MeshMaterial2d(x4_color),
         Transform::from_translation(Vec3::new(PINBALL_OFFSET_X, -50.0, 0.1)),
     ));
+    spawn_zone_label(commands, "x4", x4_center, ui_font, 18.0);
 
     // x8 区域（最难到达，在上层中间小区域）
     let x8_color = materials.add(Color::srgba(0.9, 0.2, 0.8, 0.5));
     let x8_mesh = meshes.add(Rectangle::new(ZONE_WIDTH * 0.6, ZONE_HEIGHT));
+    let x8_center = Vec3::new(PINBALL_OFFSET_X, 100.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 8 },
         Collider::rectangle(ZONE_WIDTH * 0.6, ZONE_HEIGHT),
@@ -175,6 +203,7 @@ fn spawn_multiplier_zones(
         MeshMaterial2d(x8_color),
         Transform::from_translation(Vec3::new(PINBALL_OFFSET_X, 100.0, 0.1)),  // 降低位置
     ));
+    spawn_zone_label(commands, "x8", x8_center, ui_font, 18.0);
 
     // 在加倍区上方添加小格点，阻止超大球进入
     let barrier_peg_color = materials.add(Color::srgb(0.7, 0.3, 0.3));
@@ -214,6 +243,7 @@ fn spawn_action_zones(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
+    ui_font: &Handle<Font>,
 ) {
     // 完全覆盖底部，避免缝隙
     let total_width = PINBALL_WIDTH - WALL_THICKNESS * 2.0;
@@ -232,6 +262,13 @@ fn spawn_action_zones(
 
     for (action_type, x_offset, color) in zones {
         let material = materials.add(color);
+        let label = match action_type {
+            ActionZoneType::BigBall => "Big Ball",
+            ActionZoneType::Shield => "Shield",
+            ActionZoneType::MachineGun => "MG",
+            ActionZoneType::CIWS => "CIWS",
+        };
+        let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, bottom_y, 0.2);
         commands.spawn((
             ActionZone { action_type },
             Collider::rectangle(zone_width, zone_height),
@@ -244,6 +281,7 @@ fn spawn_action_zones(
                 0.1,
             )),
         ));
+        spawn_zone_label(commands, label, zone_center, ui_font, 16.0);
     }
 }
 
