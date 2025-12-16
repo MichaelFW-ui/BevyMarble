@@ -21,7 +21,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(PhysicsPlugins::default())
-        .insert_resource(Gravity(Vec2::NEG_Y * 980.0)) // 重力加速度
+        .insert_resource(Gravity(Vec2::NEG_Y * 490.0)) // 重力加速度
         .add_message::<ActionEvent>()
         .add_message::<VictoryEvent>()
         .add_message::<UnitDestroyedEvent>()

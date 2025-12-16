@@ -162,6 +162,9 @@ fn spawn_ciws(
     ));
 }
 
+/// 子弹合并比例：每 BULLET_MERGE_RATIO 颗逻辑子弹合并为 1 颗实体子弹
+const BULLET_MERGE_RATIO: u64 = 10;
+
 /// 机关枪旋转射击
 pub fn machine_gun_rotate_fire(
     mut commands: Commands,
@@ -175,26 +178,38 @@ pub fn machine_gun_rotate_fire(
     for (mut gun, gun_transform) in machine_guns.iter_mut() {
         gun.rotation += gun.rotation_speed * delta;
 
-        // 计算这一帧应该发射多少颗子弹
+        // 计算这一帧应该发射多少颗逻辑子弹
         let fire_interval = gun.fire_timer.duration().as_secs_f32();
-        let bullets_to_fire = (delta / fire_interval) as u64;
+        let logical_bullets = (delta / fire_interval) as u64;
+        let bullets_to_consume = logical_bullets.min(gun.bullets);
 
-        for _ in 0..bullets_to_fire.min(gun.bullets) {
-            gun.bullets -= 1;
+        if bullets_to_consume == 0 {
+            continue;
+        }
 
+        gun.bullets -= bullets_to_consume;
+
+        // 合并子弹：每 BULLET_MERGE_RATIO 颗合并为 1 颗实体
+        let merged_count = (bullets_to_consume + BULLET_MERGE_RATIO - 1) / BULLET_MERGE_RATIO;
+        let value_per_bullet = bullets_to_consume / merged_count;
+        let mut remainder = bullets_to_consume % merged_count;
+
+        for _ in 0..merged_count {
             let direction = Vec2::new(gun.rotation.cos(), gun.rotation.sin());
+            // 分配余数到前几颗子弹
+            let extra = if remainder > 0 { remainder -= 1; 1 } else { 0 };
             spawn_bullet(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
                 gun.team,
-                1,
+                value_per_bullet + extra,
                 gun_transform.translation.truncate(),
                 direction,
             );
 
-            // 每颗子弹旋转一点
-            gun.rotation += 0.1;
+            // 每颗实体子弹旋转一点
+            gun.rotation += 0.1 * BULLET_MERGE_RATIO as f32;
         }
     }
 }
@@ -232,9 +247,11 @@ pub fn ciws_target_fire(
         }
 
         if let Some((target_pos, _)) = closest {
-            ciws.bullets -= 1;
+            // 合并子弹：消耗最多 BULLET_MERGE_RATIO 颗，发射 1 颗高 value 子弹
+            let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
+            ciws.bullets -= bullets_to_consume;
             let direction = (target_pos - ciws_pos).normalize();
-            spawn_bullet(&mut commands, &mut meshes, &mut materials, ciws.team, 1, ciws_pos, direction);
+            spawn_bullet(&mut commands, &mut meshes, &mut materials, ciws.team, bullets_to_consume, ciws_pos, direction);
         }
     }
 }
@@ -249,7 +266,9 @@ fn spawn_bullet(
     direction: Vec2,
 ) {
     let velocity = direction * BULLET_SPEED;
-    let mesh = meshes.add(Circle::new(BULLET_RADIUS));
+    // 子弹是方块，大小约等于 1 个格子
+    let bullet_size = BULLET_RADIUS * 2.0;
+    let mesh = meshes.add(Rectangle::new(bullet_size, bullet_size));
     let material = materials.add(team.to_color());
 
     let logic_pos = render_to_logic(render_position);
@@ -259,45 +278,50 @@ fn spawn_bullet(
         LogicPosition(logic_pos),
         LastLogicPosition(logic_pos),
         RigidBody::Dynamic,
-        Collider::circle(BULLET_RADIUS),
+        Collider::rectangle(bullet_size, bullet_size),
         LinearVelocity(velocity),
         GravityScale(0.0),
-        Mass(1.0), // 必须有质量
+        Mass(1.0),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(render_position.extend(1.5)),
     ));
 }
 
-/// 子弹边界反射（考虑半径）
+/// 子弹边界反射
 pub fn bullet_move(
     mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
 ) {
-    let bullet_logic_radius = BULLET_RADIUS * TERRITORY_LOGIC_WIDTH / 800.0;
+    let bullet_half = BULLET_RADIUS; // 方块半边长
+    let bullet_logic_half = bullet_half * TERRITORY_LOGIC_WIDTH / 800.0;
+    let min_bound = bullet_logic_half;
+    let max_bound_x = TERRITORY_LOGIC_WIDTH - bullet_logic_half;
+    let max_bound_y = TERRITORY_LOGIC_HEIGHT - bullet_logic_half;
 
     for (mut transform, mut velocity) in bullets.iter_mut() {
-        let logic_pos = render_to_logic(transform.translation.truncate());
+        let mut logic_pos = render_to_logic(transform.translation.truncate());
 
-        // 检测逻辑边界并反射（考虑半径）
-        if logic_pos.x <= bullet_logic_radius {
+        // X 轴
+        if logic_pos.x < min_bound {
+            logic_pos.x = min_bound;
             velocity.0.x = velocity.0.x.abs();
-            let render_pos = logic_to_render(Vec2::new(bullet_logic_radius, logic_pos.y));
-            transform.translation.x = render_pos.x;
-        } else if logic_pos.x >= TERRITORY_LOGIC_WIDTH - bullet_logic_radius {
+        } else if logic_pos.x > max_bound_x {
+            logic_pos.x = max_bound_x;
             velocity.0.x = -velocity.0.x.abs();
-            let render_pos = logic_to_render(Vec2::new(TERRITORY_LOGIC_WIDTH - bullet_logic_radius, logic_pos.y));
-            transform.translation.x = render_pos.x;
         }
 
-        if logic_pos.y <= bullet_logic_radius {
-            velocity.0.y = velocity.0.y.abs();
-            let render_pos = logic_to_render(Vec2::new(logic_pos.x, bullet_logic_radius));
-            transform.translation.y = render_pos.y;
-        } else if logic_pos.y >= TERRITORY_LOGIC_HEIGHT - bullet_logic_radius {
+        // Y 轴（逻辑和渲染反向）
+        if logic_pos.y < min_bound {
+            logic_pos.y = min_bound;
             velocity.0.y = -velocity.0.y.abs();
-            let render_pos = logic_to_render(Vec2::new(logic_pos.x, TERRITORY_LOGIC_HEIGHT - bullet_logic_radius));
-            transform.translation.y = render_pos.y;
+        } else if logic_pos.y > max_bound_y {
+            logic_pos.y = max_bound_y;
+            velocity.0.y = velocity.0.y.abs();
         }
+
+        let render_pos = logic_to_render(logic_pos);
+        transform.translation.x = render_pos.x;
+        transform.translation.y = render_pos.y;
     }
 }
 
@@ -596,31 +620,34 @@ pub fn check_victory(
 pub fn contain_units(
     mut bigballs: Query<(&mut Transform, &mut LogicPosition, &mut LinearVelocity), With<BigBall>>,
 ) {
-    // 大球逻辑半径
     let ball_logic_radius = BIGBALL_RADIUS * TERRITORY_LOGIC_WIDTH / 800.0;
+    let min_bound = ball_logic_radius;
+    let max_bound_x = TERRITORY_LOGIC_WIDTH - ball_logic_radius;
+    let max_bound_y = TERRITORY_LOGIC_HEIGHT - ball_logic_radius;
 
     for (mut transform, mut logic_pos, mut velocity) in bigballs.iter_mut() {
-        // 更新逻辑坐标
         logic_pos.0 = render_to_logic(transform.translation.truncate());
 
-        // 边界反弹（考虑球的半径）
-        if logic_pos.0.x <= ball_logic_radius {
+        // X 轴：逻辑和渲染同向
+        if logic_pos.0.x < min_bound {
+            logic_pos.0.x = min_bound;
             velocity.0.x = velocity.0.x.abs();
-            logic_pos.0.x = ball_logic_radius;
-        } else if logic_pos.0.x >= TERRITORY_LOGIC_WIDTH - ball_logic_radius {
+        } else if logic_pos.0.x > max_bound_x {
+            logic_pos.0.x = max_bound_x;
             velocity.0.x = -velocity.0.x.abs();
-            logic_pos.0.x = TERRITORY_LOGIC_WIDTH - ball_logic_radius;
         }
 
-        if logic_pos.0.y <= ball_logic_radius {
-            velocity.0.y = velocity.0.y.abs();
-            logic_pos.0.y = ball_logic_radius;
-        } else if logic_pos.0.y >= TERRITORY_LOGIC_HEIGHT - ball_logic_radius {
+        // Y 轴：逻辑和渲染反向
+        // 逻辑 Y 小 = 屏幕上方，要离开需 velocity.y < 0
+        // 逻辑 Y 大 = 屏幕下方，要离开需 velocity.y > 0
+        if logic_pos.0.y < min_bound {
+            logic_pos.0.y = min_bound;
             velocity.0.y = -velocity.0.y.abs();
-            logic_pos.0.y = TERRITORY_LOGIC_HEIGHT - ball_logic_radius;
+        } else if logic_pos.0.y > max_bound_y {
+            logic_pos.0.y = max_bound_y;
+            velocity.0.y = velocity.0.y.abs();
         }
 
-        // 更新渲染位置
         let render_pos = logic_to_render(logic_pos.0);
         transform.translation.x = render_pos.x;
         transform.translation.y = render_pos.y;

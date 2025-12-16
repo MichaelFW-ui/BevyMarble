@@ -54,11 +54,12 @@ fn create_grid_image(grid: &TerritoryGrid) -> Image {
     for y in 0..height {
         for x in 0..width {
             let index = ((y * width + x) * 4) as usize;
+            // 领土颜色比单位颜色暗淡，便于区分
             let color = match grid.get(x, y) {
-                Some(TeamColor::Red) => [230, 50, 50, 255],
-                Some(TeamColor::Blue) => [50, 100, 230, 255],
-                Some(TeamColor::Green) => [50, 200, 75, 255],
-                Some(TeamColor::Yellow) => [230, 215, 50, 255],
+                Some(TeamColor::Red) => [115, 25, 25, 255],
+                Some(TeamColor::Blue) => [25, 50, 115, 255],
+                Some(TeamColor::Green) => [25, 100, 38, 255],
+                Some(TeamColor::Yellow) => [115, 108, 25, 255],
                 None => [40, 40, 45, 255], // 未占领区域
             };
 
@@ -87,11 +88,12 @@ fn update_grid_image(image: &mut Image, grid: &TerritoryGrid) {
         for y in 0..height {
             for x in 0..width {
                 let index = ((y * width + x) * 4) as usize;
+                // 领土颜色比单位颜色暗淡，便于区分
                 let color = match grid.get(x, y) {
-                    Some(TeamColor::Red) => [230, 50, 50, 255],
-                    Some(TeamColor::Blue) => [50, 100, 230, 255],
-                    Some(TeamColor::Green) => [50, 200, 75, 255],
-                    Some(TeamColor::Yellow) => [230, 215, 50, 255],
+                    Some(TeamColor::Red) => [115, 25, 25, 255],
+                    Some(TeamColor::Blue) => [25, 50, 115, 255],
+                    Some(TeamColor::Green) => [25, 100, 38, 255],
+                    Some(TeamColor::Yellow) => [115, 108, 25, 255],
                     None => [40, 40, 45, 255],
                 };
 
