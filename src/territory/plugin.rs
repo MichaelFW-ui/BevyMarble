@@ -29,6 +29,7 @@ impl Plugin for TerritoryPlugin {
                     update_grid_render,
                     update_bigball_value_text,
                 ),
-            );
+            )
+            .add_systems(PostUpdate, sync_bullet_rotation_to_velocity);
     }
 }

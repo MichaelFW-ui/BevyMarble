@@ -731,6 +731,20 @@ pub fn contain_units(
     }
 }
 
+/// 让子弹朝向与其当前速度方向一致（避免物理改变速度后渲染方向滞后）
+pub fn sync_bullet_rotation_to_velocity(
+    mut bullets: Query<(&LinearVelocity, &mut Transform), With<Bullet>>,
+) {
+    for (velocity, mut transform) in bullets.iter_mut() {
+        let v = velocity.0;
+        if v.length_squared() < 1e-6 {
+            continue;
+        }
+        let angle = v.y.atan2(v.x);
+        transform.rotation = Quat::from_rotation_z(angle);
+    }
+}
+
 /// 更新大球数值文本（K/M/B）显示
 pub fn update_bigball_value_text(
     bigballs: Query<(Entity, &BigBall, Option<&Children>), Changed<BigBall>>,
