@@ -8,7 +8,6 @@ use super::components::*;
 /// 弹珠机布局常量
 pub const PINBALL_WIDTH: f32 = 400.0;
 pub const PINBALL_HEIGHT: f32 = 800.0;
-pub const PINBALL_OFFSET_X: f32 = -400.0; // 弹珠机在左侧
 pub const WALL_THICKNESS: f32 = 10.0;
 pub const PEG_RADIUS: f32 = 8.0;
 pub const ZONE_WIDTH: f32 = 80.0;
@@ -31,7 +30,7 @@ pub fn spawn_pinball_layout(
         &mut commands,
         &mut meshes,
         wall_color.clone(),
-        Vec2::new(PINBALL_OFFSET_X - PINBALL_WIDTH / 2.0, 0.0),
+        Vec2::new(-PINBALL_WIDTH / 2.0, 0.0),
         Vec2::new(WALL_THICKNESS, PINBALL_HEIGHT),
     );
 
@@ -40,7 +39,7 @@ pub fn spawn_pinball_layout(
         &mut commands,
         &mut meshes,
         wall_color.clone(),
-        Vec2::new(PINBALL_OFFSET_X + PINBALL_WIDTH / 2.0, 0.0),
+        Vec2::new(PINBALL_WIDTH / 2.0, 0.0),
         Vec2::new(WALL_THICKNESS, PINBALL_HEIGHT),
     );
 
@@ -49,7 +48,7 @@ pub fn spawn_pinball_layout(
         &mut commands,
         &mut meshes,
         wall_color.clone(),
-        Vec2::new(PINBALL_OFFSET_X, -PINBALL_HEIGHT / 2.0),
+        Vec2::new(0.0, -PINBALL_HEIGHT / 2.0),
         Vec2::new(PINBALL_WIDTH, WALL_THICKNESS),
     );
 
@@ -58,7 +57,7 @@ pub fn spawn_pinball_layout(
         &mut commands,
         &mut meshes,
         wall_color.clone(),
-        Vec2::new(PINBALL_OFFSET_X, PINBALL_HEIGHT / 2.0),
+        Vec2::new(0.0, PINBALL_HEIGHT / 2.0),
         Vec2::new(PINBALL_WIDTH, WALL_THICKNESS),
     );
 
@@ -146,7 +145,7 @@ fn spawn_pegs(
                 Mesh2d(mesh.clone()),
                 MeshMaterial2d(peg_material.clone()),
                 Transform::from_translation(Vec3::new(
-                    PINBALL_OFFSET_X + *x,
+                    *x,
                     *y,
                     0.0,
                 )),
@@ -166,7 +165,7 @@ fn spawn_multiplier_zones(
     // x2 区域（两个，在中层两侧）
     let x2_color = materials.add(Color::srgba(0.2, 0.8, 0.2, 0.5));
     for x_offset in [-100.0, 100.0] {
-        let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, -50.0, 0.2);
+        let zone_center = Vec3::new(x_offset, -50.0, 0.2);
         commands.spawn((
             MultiplierZone { multiplier: 2 },
             RenderLayers::layer(0),
@@ -175,7 +174,7 @@ fn spawn_multiplier_zones(
             Mesh2d(zone_mesh.clone()),
             MeshMaterial2d(x2_color.clone()),
             Transform::from_translation(Vec3::new(
-                PINBALL_OFFSET_X + x_offset,
+                x_offset,
                 -50.0,  // 降低位置
                 0.1,
             )),
@@ -185,7 +184,7 @@ fn spawn_multiplier_zones(
 
     // x4 区域（中间，更低）
     let x4_color = materials.add(Color::srgba(0.8, 0.6, 0.2, 0.5));
-    let x4_center = Vec3::new(PINBALL_OFFSET_X, -50.0, 0.2);
+    let x4_center = Vec3::new(0.0, -50.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 4 },
         RenderLayers::layer(0),
@@ -193,14 +192,14 @@ fn spawn_multiplier_zones(
         Sensor,
         Mesh2d(zone_mesh.clone()),
         MeshMaterial2d(x4_color),
-        Transform::from_translation(Vec3::new(PINBALL_OFFSET_X, -50.0, 0.1)),
+        Transform::from_translation(Vec3::new(0.0, -50.0, 0.1)),
     ));
     spawn_zone_label(commands, "x4", x4_center, ui_font, 18.0);
 
     // x8 区域（最难到达，在上层中间小区域）
     let x8_color = materials.add(Color::srgba(0.9, 0.2, 0.8, 0.5));
     let x8_mesh = meshes.add(Rectangle::new(ZONE_WIDTH * 0.6, ZONE_HEIGHT));
-    let x8_center = Vec3::new(PINBALL_OFFSET_X, 100.0, 0.2);
+    let x8_center = Vec3::new(0.0, 100.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 8 },
         RenderLayers::layer(0),
@@ -208,7 +207,7 @@ fn spawn_multiplier_zones(
         Sensor,
         Mesh2d(x8_mesh),
         MeshMaterial2d(x8_color),
-        Transform::from_translation(Vec3::new(PINBALL_OFFSET_X, 100.0, 0.1)),  // 降低位置
+        Transform::from_translation(Vec3::new(0.0, 100.0, 0.1)),  // 降低位置
     ));
     spawn_zone_label(commands, "x8", x8_center, ui_font, 18.0);
 
@@ -239,7 +238,7 @@ fn spawn_barrier_pegs(
             Mesh2d(mesh.clone()),
             MeshMaterial2d(peg_material.clone()),
             Transform::from_translation(Vec3::new(
-                PINBALL_OFFSET_X + x,
+                x,
                 barrier_y,
                 0.0,
             )),
@@ -276,7 +275,7 @@ fn spawn_action_zones(
             ActionZoneType::MachineGun => "MG",
             ActionZoneType::CIWS => "CIWS",
         };
-        let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, bottom_y, 0.2);
+        let zone_center = Vec3::new(x_offset, bottom_y, 0.2);
         commands.spawn((
             ActionZone { action_type },
             RenderLayers::layer(0),
@@ -285,7 +284,7 @@ fn spawn_action_zones(
             Mesh2d(zone_mesh.clone()),
             MeshMaterial2d(material),
             Transform::from_translation(Vec3::new(
-                PINBALL_OFFSET_X + x_offset,
+                x_offset,
                 bottom_y,
                 0.1,
             )),
@@ -308,7 +307,7 @@ fn spawn_marble_spawn_points(commands: &mut Commands) {
             PinballSpawnPoint { team },
             RenderLayers::layer(0),
             Transform::from_translation(Vec3::new(
-                PINBALL_OFFSET_X + x_offset,
+                x_offset,
                 PINBALL_HEIGHT / 2.0 - 50.0,
                 0.0,
             )),

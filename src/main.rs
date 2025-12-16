@@ -51,11 +51,13 @@ fn setup(mut commands: Commands, window: Single<&Window>) {
             ..default()
         },
         Projection::from(OrthographicProjection {
-            scaling_mode: ScalingMode::WindowSize,
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: pinball::PINBALL_HEIGHT,
+            },
             scale: 1.0,
             ..OrthographicProjection::default_2d()
         }),
-        Transform::from_xyz(-400.0, 0.0, 999.0),
+        Transform::from_xyz(0.0, 0.0, 999.0),
         RenderLayers::layer(0),
     ));
 

@@ -6,7 +6,7 @@ use rand::Rng;
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType};
 use super::components::*;
-use super::layout::{PINBALL_OFFSET_X, PINBALL_HEIGHT};
+use super::layout::{PINBALL_HEIGHT, PINBALL_WIDTH};
 use super::utils::{calculate_radius, format_value};
 
 const STUCK_TIME_SECS: f32 = 1.5;
@@ -209,8 +209,8 @@ pub fn contain_marbles(
     mut marbles: Query<(&Marble, &mut Transform, &mut LinearVelocity)>,
     spawn_points: Query<(&PinballSpawnPoint, &Transform), Without<Marble>>,
 ) {
-    let min_x = PINBALL_OFFSET_X - 200.0;
-    let max_x = PINBALL_OFFSET_X + 200.0;
+    let min_x = -PINBALL_WIDTH / 2.0;
+    let max_x = PINBALL_WIDTH / 2.0;
     let min_y = -PINBALL_HEIGHT / 2.0;
     let max_y = PINBALL_HEIGHT / 2.0;
 
