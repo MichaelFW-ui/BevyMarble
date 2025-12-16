@@ -34,10 +34,10 @@ impl TeamColor {
     /// 获取队伍在网格中的起始角落位置 (x, y)，基于1024x1024网格
     pub fn start_corner(&self) -> (u32, u32) {
         match self {
-            TeamColor::Red => (0, 0),           // 左上角
-            TeamColor::Blue => (1023, 0),       // 右上角
-            TeamColor::Green => (0, 1023),      // 左下角
-            TeamColor::Yellow => (1023, 1023),  // 右下角
+            TeamColor::Red => (0, 1023),          // 左上角
+            TeamColor::Blue => (1023, 1023),      // 右上角
+            TeamColor::Green => (0, 0),           // 左下角
+            TeamColor::Yellow => (1023, 0),       // 右下角
         }
     }
 }

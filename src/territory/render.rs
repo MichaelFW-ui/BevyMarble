@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::camera::visibility::RenderLayers;
 
 use crate::colors::TeamColor;
 use super::grid::TerritoryGrid;
+use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 
 /// 网格渲染组件
 #[derive(Component)]
@@ -20,12 +22,13 @@ pub fn setup_grid_render(
     // 在右侧显示网格
     commands.spawn((
         GridRenderer,
+        RenderLayers::layer(1),
         Sprite {
             image: image_handle.clone(),
-            custom_size: Some(Vec2::new(800.0, 800.0)),
+            custom_size: Some(Vec2::new(TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT)),
             ..default()
         },
-        Transform::from_translation(Vec3::new(200.0, 0.0, 0.0)),
+        Transform::from_translation(Vec3::ZERO),
     ));
 }
 
@@ -54,8 +57,10 @@ fn create_grid_image(grid: &TerritoryGrid) -> Image {
     for y in 0..height {
         for x in 0..width {
             let index = ((y * width + x) * 4) as usize;
+            // Image 的 y=0 在顶端；grid_y=0 约定为底部，所以这里需要翻转 y。
+            let grid_y = height - 1 - y;
             // 领土颜色比单位颜色暗淡，便于区分
-            let color = match grid.get(x, y) {
+            let color = match grid.get(x, grid_y) {
                 Some(TeamColor::Red) => [115, 25, 25, 255],
                 Some(TeamColor::Blue) => [25, 50, 115, 255],
                 Some(TeamColor::Green) => [25, 100, 38, 255],
@@ -88,8 +93,9 @@ fn update_grid_image(image: &mut Image, grid: &TerritoryGrid) {
         for y in 0..height {
             for x in 0..width {
                 let index = ((y * width + x) * 4) as usize;
+                let grid_y = height - 1 - y;
                 // 领土颜色比单位颜色暗淡，便于区分
-                let color = match grid.get(x, y) {
+                let color = match grid.get(x, grid_y) {
                     Some(TeamColor::Red) => [115, 25, 25, 255],
                     Some(TeamColor::Blue) => [25, 50, 115, 255],
                     Some(TeamColor::Green) => [25, 100, 38, 255],

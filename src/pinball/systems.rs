@@ -1,5 +1,6 @@
 use avian2d::prelude::*;
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use rand::Rng;
 
 use crate::colors::TeamColor;
@@ -52,6 +53,7 @@ fn spawn_marble(
 
     let marble_entity = commands.spawn((
         marble.clone(),
+        RenderLayers::layer(0),
         StuckMarbleTracker { last_pos: position, still_time: 0.0 },
         RigidBody::Dynamic,
         Collider::circle(radius),
@@ -68,6 +70,7 @@ fn spawn_marble(
     let text_value = format_value(marble.value);
     commands.spawn((
         MarbleText { marble_entity },
+        RenderLayers::layer(0),
         Text2d::new(text_value),
         TextFont {
             font: asset_server.load("fonts/FiraSans-Bold.ttf"),

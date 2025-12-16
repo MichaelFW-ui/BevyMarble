@@ -1,23 +1,208 @@
 use avian2d::prelude::*;
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use rand::Rng;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
 use crate::pinball::format_value;
+use crate::territory::TerritorySettings;
 use super::components::*;
-use super::coords::{logic_to_render, render_to_logic, TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT};
+use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use super::grid::TerritoryGrid;
 
 const BIGBALL_RADIUS: f32 = 15.0;
 const BIGBALL_SPEED: f32 = 100.0;
-const BULLET_RADIUS: f32 = 3.0;
+const BULLET_RADIUS: f32 = 6.0;
 const BULLET_WIDTH: f32 = BULLET_RADIUS * 2.0;
 const BULLET_LENGTH: f32 = BULLET_RADIUS * 2.6;
 const BULLET_BOUND_HALF: f32 = BULLET_LENGTH / 2.0;
 const BULLET_SPEED: f32 = 250.0;
 const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
+
+#[derive(Resource, Debug, Clone)]
+pub struct BulletPaintKernel {
+    pub offsets: Vec<(i32, i32)>,
+}
+
+impl Default for BulletPaintKernel {
+    fn default() -> Self {
+        // 将子弹半径（游戏空间单位）换算为“格子半径”并预计算圆形覆盖 offset。
+        // 这里不依赖任何渲染尺寸；只要 grid 的逻辑宽度不变，覆盖规则就稳定。
+        let cells_per_unit = 1024.0 / TERRITORY_LOGIC_WIDTH;
+        let radius = (BULLET_RADIUS * cells_per_unit).ceil().max(1.0) as i32;
+
+        let mut offsets = Vec::new();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    offsets.push((dx, dy));
+                }
+            }
+        }
+
+        Self { offsets }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TargetEntry {
+    entity: Entity,
+    team: TeamColor,
+    pos: Vec2,
+}
+
+#[derive(Resource, Debug)]
+pub struct TargetSpatialIndex {
+    cell_size: f32,
+    grid_w: i32,
+    grid_h: i32,
+    min_x: f32,
+    min_y: f32,
+    buckets: Vec<Vec<TargetEntry>>,
+}
+
+impl Default for TargetSpatialIndex {
+    fn default() -> Self {
+        let cell_size = 50.0;
+        let min_x = -TERRITORY_LOGIC_WIDTH / 2.0;
+        let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0;
+        let grid_w = (TERRITORY_LOGIC_WIDTH / cell_size).ceil() as i32;
+        let grid_h = (TERRITORY_LOGIC_HEIGHT / cell_size).ceil() as i32;
+        let bucket_count = (grid_w * grid_h).max(0) as usize;
+        Self {
+            cell_size,
+            grid_w,
+            grid_h,
+            min_x,
+            min_y,
+            buckets: vec![Vec::new(); bucket_count],
+        }
+    }
+}
+
+impl TargetSpatialIndex {
+    fn clear(&mut self) {
+        for bucket in &mut self.buckets {
+            bucket.clear();
+        }
+    }
+
+    fn cell_of(&self, pos: Vec2) -> Option<(i32, i32)> {
+        let x = ((pos.x - self.min_x) / self.cell_size).floor() as i32;
+        let y = ((pos.y - self.min_y) / self.cell_size).floor() as i32;
+        if x < 0 || y < 0 || x >= self.grid_w || y >= self.grid_h {
+            return None;
+        }
+        Some((x, y))
+    }
+
+    fn bucket_index(&self, cell_x: i32, cell_y: i32) -> usize {
+        (cell_y * self.grid_w + cell_x) as usize
+    }
+
+    fn cell_aabb(&self, cell_x: i32, cell_y: i32) -> (f32, f32, f32, f32) {
+        let left = self.min_x + cell_x as f32 * self.cell_size;
+        let bottom = self.min_y + cell_y as f32 * self.cell_size;
+        (left, bottom, left + self.cell_size, bottom + self.cell_size)
+    }
+
+    fn nearest_enemy_pos(&self, origin: Vec2, team: TeamColor) -> Option<Vec2> {
+        let (cx, cy) = self.cell_of(origin)?;
+
+        let mut best: Option<(u64, f32, Vec2)> = None; // (entity_bits, dist2, pos)
+        let mut r = 0;
+        let max_r = self.grid_w.max(self.grid_h);
+        let eps = 1e-6_f32;
+
+        while r <= max_r {
+            let min_x = (cx - r).max(0);
+            let max_x = (cx + r).min(self.grid_w - 1);
+            let min_y = (cy - r).max(0);
+            let max_y = (cy + r).min(self.grid_h - 1);
+
+            let visit_cell = |x: i32, y: i32, best: &mut Option<(u64, f32, Vec2)>| {
+                let idx = self.bucket_index(x, y);
+                for entry in &self.buckets[idx] {
+                    if entry.team == team {
+                        continue;
+                    }
+                    let d2 = origin.distance_squared(entry.pos);
+                    let bits = entry.entity.to_bits();
+                    match best {
+                        None => *best = Some((bits, d2, entry.pos)),
+                        Some((best_bits, best_d2, _)) => {
+                            if d2 + eps < *best_d2 || ((d2 - *best_d2).abs() <= eps && bits < *best_bits) {
+                                *best = Some((bits, d2, entry.pos));
+                            }
+                        }
+                    }
+                }
+            };
+
+            if r == 0 {
+                visit_cell(cx, cy, &mut best);
+            } else {
+                for x in min_x..=max_x {
+                    visit_cell(x, min_y, &mut best);
+                    if min_y != max_y {
+                        visit_cell(x, max_y, &mut best);
+                    }
+                }
+                for y in (min_y + 1)..=(max_y - 1) {
+                    visit_cell(min_x, y, &mut best);
+                    if min_x != max_x {
+                        visit_cell(max_x, y, &mut best);
+                    }
+                }
+            }
+
+            if let Some((_, best_d2, _)) = best {
+                // 计算“离开当前已搜索正方形”的最小距离，作为外层环的下界
+                let (left, bottom, right, top) = {
+                    let (l0, b0, _, _) = self.cell_aabb(min_x, min_y);
+                    let (_, _, r1, t1) = self.cell_aabb(max_x, max_y);
+                    (l0, b0, r1, t1)
+                };
+
+                if origin.x >= left && origin.x <= right && origin.y >= bottom && origin.y <= top {
+                    let to_left = origin.x - left;
+                    let to_right = right - origin.x;
+                    let to_bottom = origin.y - bottom;
+                    let to_top = top - origin.y;
+                    let boundary = to_left.min(to_right).min(to_bottom.min(to_top));
+                    if boundary * boundary > best_d2 {
+                        break;
+                    }
+                }
+            }
+
+            r += 1;
+        }
+
+        best.map(|(_, _, pos)| pos)
+    }
+}
+
+/// 为 CIWS 构建目标的空间索引（稳定 tie-break：同距离时选 Entity bits 更小的）
+pub fn update_target_spatial_index(
+    mut index: ResMut<TargetSpatialIndex>,
+    targets: Query<(Entity, &TerritoryUnit, &Transform), Or<(With<BigBall>, With<Bullet>)>>,
+) {
+    index.clear();
+    for (entity, unit, transform) in targets.iter() {
+        let pos = transform.translation.truncate();
+        if let Some((x, y)) = index.cell_of(pos) {
+            let idx = index.bucket_index(x, y);
+            index.buckets[idx].push(TargetEntry {
+                entity,
+                team: unit.team,
+                pos,
+            });
+        }
+    }
+}
 
 /// 响应行动事件，生成对应单位
 pub fn spawn_units_from_events(
@@ -40,7 +225,6 @@ pub fn spawn_units_from_events(
             if start_y == 0 { 50.0 } else { -50.0 },
         );
         let spawn_logic = corner_logic + offset;
-        let spawn_render = logic_to_render(spawn_logic);
 
         match event.action_type {
             ActionType::BigBall => {
@@ -51,21 +235,20 @@ pub fn spawn_units_from_events(
                     &ui_font,
                     event.team,
                     event.value,
-                    spawn_render,
                     spawn_logic,
                 );
             }
             ActionType::Shield => {
                 // 护盾以HQ为中心
-                spawn_shield(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render, spawn_logic);
+                spawn_shield(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
             }
             ActionType::MachineGun => {
                 // 机关枪在HQ中心
-                spawn_machine_gun(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render);
+                spawn_machine_gun(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
             }
             ActionType::CIWS => {
                 // CIWS在HQ中心
-                spawn_ciws(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_render);
+                spawn_ciws(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
             }
         }
     }
@@ -78,8 +261,7 @@ fn spawn_bigball(
     ui_font: &Handle<Font>,
     team: TeamColor,
     size: u64,
-    render_position: Vec2,
-    logic_position: Vec2,
+    position: Vec2,
 ) {
     let mut rng = rand::thread_rng();
     let angle = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -88,28 +270,32 @@ fn spawn_bigball(
     let mesh = meshes.add(Circle::new(BIGBALL_RADIUS));
     let material = materials.add(team.to_color());
 
-    let ball_entity = commands.spawn((
-        BigBall { team, size },
-        TerritoryUnit { team },
-        LogicPosition(logic_position),
-        LastLogicPosition(logic_position),
-        RigidBody::Dynamic,
-        Collider::circle(BIGBALL_RADIUS),
-        // 只与敌方碰撞
-        CollisionLayers::new([team.to_layer()], TEAM_LAYERS),
-        LinearVelocity(velocity),
-        Mass(size.min(1000) as f32),
-        Restitution::new(0.9),
-        GravityScale(0.0),
-        Mesh2d(mesh),
-        MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(1.0)),
-        CollisionEventsEnabled,
-    )).id();
+    let ball_entity = commands
+        .spawn((
+            BigBall { team, size },
+            TerritoryUnit { team },
+            LogicPosition(position),
+            LastLogicPosition(position),
+            RigidBody::Dynamic,
+            Collider::circle(BIGBALL_RADIUS),
+            // 只与敌方碰撞
+            CollisionLayers::new([team.to_layer()], TEAM_LAYERS),
+            LinearVelocity(velocity),
+            Mass(size.min(1000) as f32),
+            Restitution::new(0.9),
+            GravityScale(0.0),
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform::from_translation(position.extend(1.0)),
+            CollisionEventsEnabled,
+        ))
+        .insert(RenderLayers::layer(1))
+        .id();
 
     commands.entity(ball_entity).with_children(|parent| {
         parent.spawn((
             BigBallValueText,
+            RenderLayers::layer(1),
             Text2d::new(format_value(size)),
             TextFont {
                 font: ui_font.clone(),
@@ -128,8 +314,7 @@ fn spawn_shield(
     materials: &mut ResMut<Assets<ColorMaterial>>,
     team: TeamColor,
     durability: u64,
-    render_position: Vec2,
-    logic_position: Vec2,
+    position: Vec2,
 ) {
     let mesh = meshes.add(Circle::new(SHIELD_RADIUS));
     let mut color = team.to_color();
@@ -139,10 +324,11 @@ fn spawn_shield(
     commands.spawn((
         Shield { team, durability, radius: SHIELD_RADIUS },
         TerritoryUnit { team },
-        LogicPosition(logic_position),
+        RenderLayers::layer(1),
+        LogicPosition(position),
         Mesh2d(mesh),
         MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(0.8)),
+        Transform::from_translation(position.extend(0.8)),
     ));
 }
 
@@ -152,7 +338,7 @@ fn spawn_machine_gun(
     materials: &mut ResMut<Assets<ColorMaterial>>,
     team: TeamColor,
     bullets: u64,
-    render_position: Vec2,
+    position: Vec2,
 ) {
     let mesh = meshes.add(Rectangle::new(15.0, 15.0));
     let material = materials.add(team.to_color());
@@ -166,9 +352,10 @@ fn spawn_machine_gun(
             rotation_speed: std::f32::consts::PI / 2.0,
         },
         TerritoryUnit { team },
+        RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(0.9)),
+        Transform::from_translation(position.extend(0.9)),
     ));
 }
 
@@ -178,7 +365,7 @@ fn spawn_ciws(
     materials: &mut ResMut<Assets<ColorMaterial>>,
     team: TeamColor,
     bullets: u64,
-    render_position: Vec2,
+    position: Vec2,
 ) {
     let mesh = meshes.add(Circle::new(10.0));
     let material = materials.add(team.to_color());
@@ -190,9 +377,10 @@ fn spawn_ciws(
             fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating),
         },
         TerritoryUnit { team },
+        RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(0.9)),
+        Transform::from_translation(position.extend(0.9)),
     ));
 }
 
@@ -253,7 +441,7 @@ pub fn ciws_target_fire(
     mut commands: Commands,
     time: Res<Time>,
     mut ciws_query: Query<(&mut CIWS, &Transform)>,
-    targets: Query<(&TerritoryUnit, &Transform), Or<(With<BigBall>, With<Bullet>)>>,
+    target_index: Res<TargetSpatialIndex>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
@@ -265,22 +453,7 @@ pub fn ciws_target_fire(
         }
 
         let ciws_pos = ciws_transform.translation.truncate();
-        let mut closest: Option<(Vec2, f32)> = None;
-
-        for (unit, target_transform) in targets.iter() {
-            if unit.team == ciws.team {
-                continue;
-            }
-
-            let target_pos = target_transform.translation.truncate();
-            let distance = ciws_pos.distance(target_pos);
-
-            if closest.is_none() || distance < closest.unwrap().1 {
-                closest = Some((target_pos, distance));
-            }
-        }
-
-        if let Some((target_pos, _)) = closest {
+        if let Some(target_pos) = target_index.nearest_enemy_pos(ciws_pos, ciws.team) {
             // 合并子弹：消耗最多 BULLET_MERGE_RATIO 颗，发射 1 颗高 value 子弹
             let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
             ciws.bullets -= bullets_to_consume;
@@ -296,7 +469,7 @@ fn spawn_bullet(
     materials: &mut ResMut<Assets<ColorMaterial>>,
     team: TeamColor,
     value: u64,
-    render_position: Vec2,
+    position: Vec2,
     direction: Vec2,
 ) {
     let velocity = direction * BULLET_SPEED;
@@ -313,12 +486,11 @@ fn spawn_bullet(
 
     let material = materials.add(team.to_color());
 
-    let logic_pos = render_to_logic(render_position);
-
     commands.spawn((
         Bullet { team, value },
-        LogicPosition(logic_pos),
-        LastLogicPosition(logic_pos),
+        RenderLayers::layer(1),
+        LogicPosition(position),
+        LastLogicPosition(position),
         RigidBody::Dynamic,
         // 物理碰撞体用矩形近似即可（旋转会跟随 Transform）
         Collider::rectangle(BULLET_LENGTH, BULLET_WIDTH),
@@ -329,7 +501,7 @@ fn spawn_bullet(
         Mass(1.0),
         Mesh2d(mesh),
         MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),
+        Transform::from_translation(position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),
     ));
 }
 
@@ -338,30 +510,30 @@ pub fn bullet_move(
     mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
 ) {
     let bullet_half = BULLET_BOUND_HALF;
-    let bullet_logic_half = bullet_half * TERRITORY_LOGIC_WIDTH / 800.0;
-    let min_bound = bullet_logic_half;
-    let max_bound_x = TERRITORY_LOGIC_WIDTH - bullet_logic_half;
-    let max_bound_y = TERRITORY_LOGIC_HEIGHT - bullet_logic_half;
+    let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + bullet_half;
+    let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - bullet_half;
+    let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + bullet_half;
+    let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - bullet_half;
 
     for (mut transform, mut velocity) in bullets.iter_mut() {
-        let mut logic_pos = render_to_logic(transform.translation.truncate());
+        let mut pos = transform.translation.truncate();
 
         // X 轴
-        if logic_pos.x < min_bound {
-            logic_pos.x = min_bound;
+        if pos.x < min_x {
+            pos.x = min_x;
             velocity.0.x = velocity.0.x.abs();
-        } else if logic_pos.x > max_bound_x {
-            logic_pos.x = max_bound_x;
+        } else if pos.x > max_x {
+            pos.x = max_x;
             velocity.0.x = -velocity.0.x.abs();
         }
 
-        // Y 轴（逻辑和渲染反向）
-        if logic_pos.y < min_bound {
-            logic_pos.y = min_bound;
-            velocity.0.y = -velocity.0.y.abs();
-        } else if logic_pos.y > max_bound_y {
-            logic_pos.y = max_bound_y;
+        // Y 轴
+        if pos.y < min_y {
+            pos.y = min_y;
             velocity.0.y = velocity.0.y.abs();
+        } else if pos.y > max_y {
+            pos.y = max_y;
+            velocity.0.y = -velocity.0.y.abs();
         }
 
         // 保证最低速度
@@ -370,9 +542,8 @@ pub fn bullet_move(
             velocity.0 = velocity.0.normalize() * BULLET_MIN_SPEED;
         }
 
-        let render_pos = logic_to_render(logic_pos);
-        transform.translation.x = render_pos.x;
-        transform.translation.y = render_pos.y;
+        transform.translation.x = pos.x;
+        transform.translation.y = pos.y;
     }
 }
 
@@ -380,13 +551,11 @@ pub fn bullet_move(
 pub fn bullet_hit_terrain(
     mut commands: Commands,
     mut grid: ResMut<TerritoryGrid>,
+    kernel: Res<BulletPaintKernel>,
     mut bullets: Query<(Entity, &mut Bullet, &Transform, &mut LastLogicPosition)>,
 ) {
-    // 子弹“接触面积”：按像素半径换算成网格半径，让染色不是一条细线
-    let paint_radius = ((BULLET_RADIUS * grid.width as f32) / 800.0).ceil().max(1.0) as i32;
-
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
-        let current_logic = render_to_logic(transform.translation.truncate());
+        let current_logic = transform.translation.truncate();
 
         // 跳过第一帧（子弹还没移动）
         if last_pos.0 == current_logic {
@@ -403,34 +572,24 @@ pub fn bullet_hit_terrain(
                 }
 
                 if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
-                    // 以路径点为中心，染一个圆形区域（更粗的“弹道”）
-                    for dy in -paint_radius..=paint_radius {
-                        for dx in -paint_radius..=paint_radius {
-                            if bullet.value == 0 {
-                                break;
-                            }
-
-                            if dx * dx + dy * dy > paint_radius * paint_radius {
-                                continue;
-                            }
-
-                            let nx = x + dx;
-                            let ny = y + dy;
-
-                            if nx < 0 || ny < 0 || nx >= grid.width as i32 || ny >= grid.height as i32 {
-                                continue;
-                            }
-
-                            let cell_team = grid.get(nx as u32, ny as u32);
-                            // 只有空白或敌方领土才染色并消耗
-                            if cell_team != Some(bullet.team) {
-                                grid.set(nx as u32, ny as u32, Some(bullet.team));
-                                bullet.value = bullet.value.saturating_sub(1);
-                            }
-                        }
-
+                    // 以路径点为中心，染一个圆形区域（查表 offset，避免内层双循环）
+                    for (dx, dy) in kernel.offsets.iter().copied() {
                         if bullet.value == 0 {
                             break;
+                        }
+
+                        let nx = x + dx;
+                        let ny = y + dy;
+
+                        if nx < 0 || ny < 0 || nx >= grid.width as i32 || ny >= grid.height as i32 {
+                            continue;
+                        }
+
+                        let cell_team = grid.get(nx as u32, ny as u32);
+                        // 只有空白或敌方领土才染色并消耗
+                        if cell_team != Some(bullet.team) {
+                            grid.set(nx as u32, ny as u32, Some(bullet.team));
+                            bullet.value = bullet.value.saturating_sub(1);
                         }
                     }
                 }
@@ -510,9 +669,14 @@ pub fn bullet_hit_units(
 /// 子弹与子弹碰撞
 pub fn bullet_bullet_collision(
     mut commands: Commands,
+    settings: Res<TerritorySettings>,
     mut collision_events: MessageReader<CollisionStart>,
     mut bullets: Query<(&mut Bullet, Entity)>,
 ) {
+    if !settings.enable_bullet_bullet_collision {
+        return;
+    }
+
     for event in collision_events.read() {
         // 使用 get_many_mut 避免同时借用冲突
         if let Ok([(mut bullet1, entity1), (mut bullet2, entity2)]) =
@@ -549,7 +713,7 @@ pub fn bigball_occupy_territory(
 
     for (mut ball, transform, mut logic_pos, mut last_logic_pos) in bigballs.iter_mut() {
         // 更新逻辑坐标
-        logic_pos.0 = render_to_logic(transform.translation.truncate());
+        logic_pos.0 = transform.translation.truncate();
         let current_pos = logic_pos.0;
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
@@ -697,37 +861,35 @@ pub fn check_victory(
 pub fn contain_units(
     mut bigballs: Query<(&mut Transform, &mut LogicPosition, &mut LinearVelocity), With<BigBall>>,
 ) {
-    let ball_logic_radius = BIGBALL_RADIUS * TERRITORY_LOGIC_WIDTH / 800.0;
-    let min_bound = ball_logic_radius;
-    let max_bound_x = TERRITORY_LOGIC_WIDTH - ball_logic_radius;
-    let max_bound_y = TERRITORY_LOGIC_HEIGHT - ball_logic_radius;
+    let r = BIGBALL_RADIUS;
+    let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
+    let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
+    let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + r;
+    let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - r;
 
     for (mut transform, mut logic_pos, mut velocity) in bigballs.iter_mut() {
-        logic_pos.0 = render_to_logic(transform.translation.truncate());
+        logic_pos.0 = transform.translation.truncate();
 
-        // X 轴：逻辑和渲染同向
-        if logic_pos.0.x < min_bound {
-            logic_pos.0.x = min_bound;
+        // X 轴
+        if logic_pos.0.x < min_x {
+            logic_pos.0.x = min_x;
             velocity.0.x = velocity.0.x.abs();
-        } else if logic_pos.0.x > max_bound_x {
-            logic_pos.0.x = max_bound_x;
+        } else if logic_pos.0.x > max_x {
+            logic_pos.0.x = max_x;
             velocity.0.x = -velocity.0.x.abs();
         }
 
-        // Y 轴：逻辑和渲染反向
-        // 逻辑 Y 小 = 屏幕上方，要离开需 velocity.y < 0
-        // 逻辑 Y 大 = 屏幕下方，要离开需 velocity.y > 0
-        if logic_pos.0.y < min_bound {
-            logic_pos.0.y = min_bound;
-            velocity.0.y = -velocity.0.y.abs();
-        } else if logic_pos.0.y > max_bound_y {
-            logic_pos.0.y = max_bound_y;
+        // Y 轴
+        if logic_pos.0.y < min_y {
+            logic_pos.0.y = min_y;
             velocity.0.y = velocity.0.y.abs();
+        } else if logic_pos.0.y > max_y {
+            logic_pos.0.y = max_y;
+            velocity.0.y = -velocity.0.y.abs();
         }
 
-        let render_pos = logic_to_render(logic_pos.0);
-        transform.translation.x = render_pos.x;
-        transform.translation.y = render_pos.y;
+        transform.translation.x = logic_pos.0.x;
+        transform.translation.y = logic_pos.0.y;
     }
 }
 

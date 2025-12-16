@@ -16,13 +16,11 @@ impl TerritoryGrid {
         let total_cells = (width * height) as usize;
         let mut cells = vec![None; total_cells];
 
-        // 初始化四个角落
-        let corners = [
-            (TeamColor::Red, 0, 0),                     // 左上
-            (TeamColor::Blue, width - 1, 0),            // 右上
-            (TeamColor::Green, 0, height - 1),          // 左下
-            (TeamColor::Yellow, width - 1, height - 1), // 右下
-        ];
+        // 初始化四个角落（与 TeamColor::start_corner 一致）
+        let corners = TeamColor::all().map(|team| {
+            let (x, y) = team.start_corner();
+            (team, x, y)
+        });
 
         for (team, x, y) in corners {
             // 在角落占领一小块区域（5x5）

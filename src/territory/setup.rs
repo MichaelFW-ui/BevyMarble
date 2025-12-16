@@ -1,7 +1,7 @@
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 
 use crate::colors::TeamColor;
-use super::coords::logic_to_render;
 use super::grid::TerritoryGrid;
 
 /// 开局初始化系统
@@ -22,17 +22,16 @@ pub fn setup_initial_game(
             if start_y == 0 { 50.0 } else { -50.0 },
         );
         let base_logic = corner_logic + offset;
-        let base_render = logic_to_render(base_logic);
 
         // HQ - 在角落内侧
-        spawn_hq(&mut commands, &mut meshes, &mut materials, team, base_render);
+        spawn_hq(&mut commands, &mut meshes, &mut materials, team, base_logic);
 
         // 初始机关枪 - 2个，在HQ中心
-        spawn_initial_machine_gun(&mut commands, &mut meshes, &mut materials, team, base_render);
-        spawn_initial_machine_gun(&mut commands, &mut meshes, &mut materials, team, base_render);
+        spawn_initial_machine_gun(&mut commands, &mut meshes, &mut materials, team, base_logic);
+        spawn_initial_machine_gun(&mut commands, &mut meshes, &mut materials, team, base_logic);
 
         // 初始近防炮 - 1个，在HQ中心
-        spawn_initial_ciws(&mut commands, &mut meshes, &mut materials, team, base_render);
+        spawn_initial_ciws(&mut commands, &mut meshes, &mut materials, team, base_logic);
     }
 }
 
@@ -52,6 +51,7 @@ fn spawn_hq(
 
     commands.spawn((
         HQ { team },
+        RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(2.0)),
@@ -80,6 +80,7 @@ fn spawn_initial_machine_gun(
             rotation_speed: PI * 2.0, // 旋转
         },
         TerritoryUnit { team },
+        RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(0.9)),
@@ -105,6 +106,7 @@ fn spawn_initial_ciws(
             fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating),
         },
         TerritoryUnit { team },
+        RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(0.9)),

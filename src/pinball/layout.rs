@@ -1,5 +1,6 @@
 use avian2d::prelude::*;
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 
 use crate::colors::TeamColor;
 use super::components::*;
@@ -83,6 +84,7 @@ fn spawn_zone_label(
 ) {
     commands.spawn((
         Text2d::new(text),
+        RenderLayers::layer(0),
         TextFont {
             font: font.clone(),
             font_size,
@@ -102,6 +104,7 @@ fn spawn_wall(
 ) {
     commands.spawn((
         PinballWall,
+        RenderLayers::layer(0),
         RigidBody::Static,
         Collider::rectangle(size.x, size.y),
         Mesh2d(meshes.add(Rectangle::new(size.x, size.y))),
@@ -137,6 +140,7 @@ fn spawn_pegs(
         for x in x_positions.iter() {
             commands.spawn((
                 PinballPeg,
+                RenderLayers::layer(0),
                 RigidBody::Static,
                 Collider::circle(PEG_RADIUS),
                 Mesh2d(mesh.clone()),
@@ -165,6 +169,7 @@ fn spawn_multiplier_zones(
         let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, -50.0, 0.2);
         commands.spawn((
             MultiplierZone { multiplier: 2 },
+            RenderLayers::layer(0),
             Collider::rectangle(ZONE_WIDTH, ZONE_HEIGHT),
             Sensor,
             Mesh2d(zone_mesh.clone()),
@@ -183,6 +188,7 @@ fn spawn_multiplier_zones(
     let x4_center = Vec3::new(PINBALL_OFFSET_X, -50.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 4 },
+        RenderLayers::layer(0),
         Collider::rectangle(ZONE_WIDTH, ZONE_HEIGHT),
         Sensor,
         Mesh2d(zone_mesh.clone()),
@@ -197,6 +203,7 @@ fn spawn_multiplier_zones(
     let x8_center = Vec3::new(PINBALL_OFFSET_X, 100.0, 0.2);
     commands.spawn((
         MultiplierZone { multiplier: 8 },
+        RenderLayers::layer(0),
         Collider::rectangle(ZONE_WIDTH * 0.6, ZONE_HEIGHT),
         Sensor,
         Mesh2d(x8_mesh),
@@ -226,6 +233,7 @@ fn spawn_barrier_pegs(
     for x in barrier_positions {
         commands.spawn((
             PinballPeg,
+            RenderLayers::layer(0),
             RigidBody::Static,
             Collider::circle(PEG_RADIUS),
             Mesh2d(mesh.clone()),
@@ -271,6 +279,7 @@ fn spawn_action_zones(
         let zone_center = Vec3::new(PINBALL_OFFSET_X + x_offset, bottom_y, 0.2);
         commands.spawn((
             ActionZone { action_type },
+            RenderLayers::layer(0),
             Collider::rectangle(zone_width, zone_height),
             Sensor,
             Mesh2d(zone_mesh.clone()),
@@ -297,6 +306,7 @@ fn spawn_marble_spawn_points(commands: &mut Commands) {
     for (team, x_offset) in spawn_positions {
         commands.spawn((
             PinballSpawnPoint { team },
+            RenderLayers::layer(0),
             Transform::from_translation(Vec3::new(
                 PINBALL_OFFSET_X + x_offset,
                 PINBALL_HEIGHT / 2.0 - 50.0,

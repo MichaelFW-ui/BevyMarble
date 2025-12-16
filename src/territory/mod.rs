@@ -7,3 +7,5 @@ mod setup;
 mod systems;
 
 pub use plugin::TerritoryPlugin;
+pub use plugin::TerritorySettings;
+pub use coords::TERRITORY_LOGIC_WIDTH;
