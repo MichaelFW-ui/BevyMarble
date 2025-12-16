@@ -12,6 +12,7 @@ const BIGBALL_RADIUS: f32 = 15.0;
 const BIGBALL_SPEED: f32 = 100.0;
 const BULLET_RADIUS: f32 = 3.0;
 const BULLET_SPEED: f32 = 250.0;
+const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
 
 /// 响应行动事件，生成对应单位
@@ -77,10 +78,12 @@ fn spawn_bigball(
         LastLogicPosition(logic_position),
         RigidBody::Dynamic,
         Collider::circle(BIGBALL_RADIUS),
+        // 只与敌方碰撞
+        CollisionLayers::new([team.to_layer()], team.enemy_layers()),
         LinearVelocity(velocity),
         Mass(size.min(1000) as f32),
         Restitution::new(0.9),
-        GravityScale(0.0), // 右侧无重力
+        GravityScale(0.0),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(render_position.extend(1.0)),
@@ -163,7 +166,7 @@ fn spawn_ciws(
 }
 
 /// 子弹合并比例：每 BULLET_MERGE_RATIO 颗逻辑子弹合并为 1 颗实体子弹
-const BULLET_MERGE_RATIO: u64 = 10;
+const BULLET_MERGE_RATIO: u64 = 100;
 
 /// 机关枪旋转射击
 pub fn machine_gun_rotate_fire(
@@ -209,7 +212,7 @@ pub fn machine_gun_rotate_fire(
             );
 
             // 每颗实体子弹旋转一点
-            gun.rotation += 0.1 * BULLET_MERGE_RATIO as f32;
+            gun.rotation += 0.00003 * BULLET_MERGE_RATIO as f32;
         }
     }
 }
@@ -266,7 +269,6 @@ fn spawn_bullet(
     direction: Vec2,
 ) {
     let velocity = direction * BULLET_SPEED;
-    // 子弹是方块，大小约等于 1 个格子
     let bullet_size = BULLET_RADIUS * 2.0;
     let mesh = meshes.add(Rectangle::new(bullet_size, bullet_size));
     let material = materials.add(team.to_color());
@@ -279,6 +281,8 @@ fn spawn_bullet(
         LastLogicPosition(logic_pos),
         RigidBody::Dynamic,
         Collider::rectangle(bullet_size, bullet_size),
+        // 只与敌方碰撞
+        CollisionLayers::new([team.to_layer()], team.enemy_layers()),
         LinearVelocity(velocity),
         GravityScale(0.0),
         Mass(1.0),
@@ -288,11 +292,11 @@ fn spawn_bullet(
     ));
 }
 
-/// 子弹边界反射
+/// 子弹边界反射 + 最低速度保证
 pub fn bullet_move(
     mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
 ) {
-    let bullet_half = BULLET_RADIUS; // 方块半边长
+    let bullet_half = BULLET_RADIUS;
     let bullet_logic_half = bullet_half * TERRITORY_LOGIC_WIDTH / 800.0;
     let min_bound = bullet_logic_half;
     let max_bound_x = TERRITORY_LOGIC_WIDTH - bullet_logic_half;
@@ -317,6 +321,12 @@ pub fn bullet_move(
         } else if logic_pos.y > max_bound_y {
             logic_pos.y = max_bound_y;
             velocity.0.y = velocity.0.y.abs();
+        }
+
+        // 保证最低速度
+        let speed = velocity.0.length();
+        if speed < BULLET_MIN_SPEED && speed > 0.0 {
+            velocity.0 = velocity.0.normalize() * BULLET_MIN_SPEED;
         }
 
         let render_pos = logic_to_render(logic_pos);

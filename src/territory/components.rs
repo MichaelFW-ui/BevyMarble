@@ -1,6 +1,40 @@
+use avian2d::prelude::*;
 use bevy::prelude::*;
 
 use crate::colors::TeamColor;
+
+/// 碰撞层定义
+#[derive(PhysicsLayer, Default, Clone, Copy, Debug)]
+pub enum GameLayer {
+    #[default]
+    Default,
+    RedTeam,
+    BlueTeam,
+    GreenTeam,
+    YellowTeam,
+}
+
+impl TeamColor {
+    /// 获取队伍对应的碰撞层
+    pub fn to_layer(&self) -> GameLayer {
+        match self {
+            TeamColor::Red => GameLayer::RedTeam,
+            TeamColor::Blue => GameLayer::BlueTeam,
+            TeamColor::Green => GameLayer::GreenTeam,
+            TeamColor::Yellow => GameLayer::YellowTeam,
+        }
+    }
+
+    /// 获取敌方队伍的碰撞层（用于碰撞过滤）
+    pub fn enemy_layers(&self) -> [GameLayer; 3] {
+        match self {
+            TeamColor::Red => [GameLayer::BlueTeam, GameLayer::GreenTeam, GameLayer::YellowTeam],
+            TeamColor::Blue => [GameLayer::RedTeam, GameLayer::GreenTeam, GameLayer::YellowTeam],
+            TeamColor::Green => [GameLayer::RedTeam, GameLayer::BlueTeam, GameLayer::YellowTeam],
+            TeamColor::Yellow => [GameLayer::RedTeam, GameLayer::BlueTeam, GameLayer::GreenTeam],
+        }
+    }
+}
 
 /// 大球组件 - 移动占领格子
 #[derive(Component, Debug, Clone)]

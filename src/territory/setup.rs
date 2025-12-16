@@ -75,7 +75,7 @@ fn spawn_initial_machine_gun(
         MachineGun {
             team,
             bullets: 10_000_000, // 初始10M子弹
-            fire_timer: Timer::from_seconds(0.01, TimerMode::Repeating), // 每秒100发
+            fire_timer: Timer::from_seconds(0.001, TimerMode::Repeating), // 每秒100发
             rotation: 0.0,
             rotation_speed: PI * 2.0, // 旋转
         },
