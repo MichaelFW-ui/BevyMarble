@@ -12,6 +12,9 @@ use super::grid::TerritoryGrid;
 const BIGBALL_RADIUS: f32 = 15.0;
 const BIGBALL_SPEED: f32 = 100.0;
 const BULLET_RADIUS: f32 = 3.0;
+const BULLET_WIDTH: f32 = BULLET_RADIUS * 2.0;
+const BULLET_LENGTH: f32 = BULLET_RADIUS * 2.6;
+const BULLET_BOUND_HALF: f32 = BULLET_LENGTH / 2.0;
 const BULLET_SPEED: f32 = 250.0;
 const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
@@ -240,7 +243,7 @@ pub fn machine_gun_rotate_fire(
             );
 
             // 每颗实体子弹旋转一点
-            gun.rotation += 0.00003 * BULLET_MERGE_RATIO as f32;
+            gun.rotation += 0.00001 * BULLET_MERGE_RATIO as f32;
         }
     }
 }
@@ -297,8 +300,17 @@ fn spawn_bullet(
     direction: Vec2,
 ) {
     let velocity = direction * BULLET_SPEED;
-    let bullet_size = BULLET_RADIUS * 2.0;
-    let mesh = meshes.add(Rectangle::new(bullet_size, bullet_size));
+    let angle = direction.y.atan2(direction.x);
+
+    // 子弹渲染为三角形（尖角朝向运动方向），本地坐标系中尖角朝 +X。
+    let half_length = BULLET_LENGTH / 2.0;
+    let half_width = BULLET_WIDTH / 2.0;
+    let mesh = meshes.add(Triangle2d::new(
+        Vec2::new(half_length, 0.0),
+        Vec2::new(-half_length, half_width),
+        Vec2::new(-half_length, -half_width),
+    ));
+
     let material = materials.add(team.to_color());
 
     let logic_pos = render_to_logic(render_position);
@@ -308,7 +320,8 @@ fn spawn_bullet(
         LogicPosition(logic_pos),
         LastLogicPosition(logic_pos),
         RigidBody::Dynamic,
-        Collider::rectangle(bullet_size, bullet_size),
+        // 物理碰撞体用矩形近似即可（旋转会跟随 Transform）
+        Collider::rectangle(BULLET_LENGTH, BULLET_WIDTH),
         // 只与敌方碰撞
         CollisionLayers::new([team.to_layer()], team.enemy_layers()),
         LinearVelocity(velocity),
@@ -316,7 +329,7 @@ fn spawn_bullet(
         Mass(1.0),
         Mesh2d(mesh),
         MeshMaterial2d(material),
-        Transform::from_translation(render_position.extend(1.5)),
+        Transform::from_translation(render_position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),
     ));
 }
 
@@ -324,7 +337,7 @@ fn spawn_bullet(
 pub fn bullet_move(
     mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
 ) {
-    let bullet_half = BULLET_RADIUS;
+    let bullet_half = BULLET_BOUND_HALF;
     let bullet_logic_half = bullet_half * TERRITORY_LOGIC_WIDTH / 800.0;
     let min_bound = bullet_logic_half;
     let max_bound_x = TERRITORY_LOGIC_WIDTH - bullet_logic_half;
@@ -369,6 +382,9 @@ pub fn bullet_hit_terrain(
     mut grid: ResMut<TerritoryGrid>,
     mut bullets: Query<(Entity, &mut Bullet, &Transform, &mut LastLogicPosition)>,
 ) {
+    // 子弹“接触面积”：按像素半径换算成网格半径，让染色不是一条细线
+    let paint_radius = ((BULLET_RADIUS * grid.width as f32) / 800.0).ceil().max(1.0) as i32;
+
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
         let current_logic = render_to_logic(transform.translation.truncate());
 
@@ -387,12 +403,35 @@ pub fn bullet_hit_terrain(
                 }
 
                 if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
-                    let cell_team = grid.get(x as u32, y as u32);
+                    // 以路径点为中心，染一个圆形区域（更粗的“弹道”）
+                    for dy in -paint_radius..=paint_radius {
+                        for dx in -paint_radius..=paint_radius {
+                            if bullet.value == 0 {
+                                break;
+                            }
 
-                    // 只有空白或敌方领土才染色并消耗
-                    if cell_team != Some(bullet.team) {
-                        grid.set(x as u32, y as u32, Some(bullet.team));
-                        bullet.value = bullet.value.saturating_sub(1);
+                            if dx * dx + dy * dy > paint_radius * paint_radius {
+                                continue;
+                            }
+
+                            let nx = x + dx;
+                            let ny = y + dy;
+
+                            if nx < 0 || ny < 0 || nx >= grid.width as i32 || ny >= grid.height as i32 {
+                                continue;
+                            }
+
+                            let cell_team = grid.get(nx as u32, ny as u32);
+                            // 只有空白或敌方领土才染色并消耗
+                            if cell_team != Some(bullet.team) {
+                                grid.set(nx as u32, ny as u32, Some(bullet.team));
+                                bullet.value = bullet.value.saturating_sub(1);
+                            }
+                        }
+
+                        if bullet.value == 0 {
+                            break;
+                        }
                     }
                 }
             }
