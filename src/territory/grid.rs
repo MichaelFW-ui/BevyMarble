@@ -138,6 +138,64 @@ impl TerritoryGrid {
         (bits[row_base + end_word] & end_mask) == end_mask
     }
 
+    /// 在同一行 [x0, x1] 内，把所有“非己方”的格子改为 team，直到耗尽 budget。
+    /// 返回本次实际染色（消耗 budget）的格子数。
+    ///
+    /// 这是确定性的、不会漏洞的优化：只枚举位图中不是 team 的 bit。
+    pub fn paint_span_no_shield(&mut self, team: TeamColor, y: u32, x0: u32, x1: u32, budget: &mut u64) -> u64 {
+        if *budget == 0 {
+            return 0;
+        }
+        let team_id = team.to_id();
+        if !(1..=4).contains(&team_id) {
+            return 0;
+        }
+        if y >= self.height || x0 > x1 || x1 >= self.width {
+            return 0;
+        }
+        if self.row_all_team(team_id, y, x0, x1) {
+            return 0;
+        }
+
+        let start_word = (x0 as usize) / 64;
+        let end_word = (x1 as usize) / 64;
+        let row_base = (y as usize) * self.row_words;
+        let start_bit = (x0 as usize) % 64;
+        let end_bit = (x1 as usize) % 64;
+
+        let mut painted = 0u64;
+        for w in start_word..=end_word {
+            if *budget == 0 {
+                break;
+            }
+            let mut mask = u64::MAX;
+            if w == start_word {
+                mask &= u64::MAX << start_bit;
+            }
+            if w == end_word && end_bit != 63 {
+                mask &= (1u64 << (end_bit + 1)) - 1;
+            }
+
+            // NOTE: bits 是只读快照引用；set_id 会更新位图，但我们只用 holes 的逐 bit 枚举，
+            // 且每个 bit 最多处理一次，不会漏涂。
+            let word_idx = row_base + w;
+            let team_bits = self.team_row_bits[(team_id - 1) as usize][word_idx];
+            let mut holes = (!team_bits) & mask;
+            while holes != 0 && *budget != 0 {
+                let bit = holes.trailing_zeros() as usize;
+                holes &= holes - 1;
+                let x = (w * 64 + bit) as u32;
+                if x < self.width && self.cell_id(x, y) != team_id {
+                    self.set_id(x, y, team_id);
+                    *budget -= 1;
+                    painted += 1;
+                }
+            }
+        }
+
+        painted
+    }
+
     /// 获取指定位置的所属颜色
     pub fn get(&self, x: u32, y: u32) -> Option<TeamColor> {
         if x >= self.width || y >= self.height {

@@ -680,7 +680,7 @@ pub fn bullet_hit_terrain(
     let kernel_points = kernel.points_est;
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
         let current_logic = transform.translation.truncate();
-        let team_id = bullet.team.to_id();
+        let _team_id = bullet.team.to_id();
 
         // 跳过第一帧（子弹还没移动）
         if last_pos.0 == current_logic {
@@ -721,24 +721,15 @@ pub fn bullet_hit_terrain(
                             continue;
                         }
 
-                        // 正确性保证：只有在“这一整段都已是己方”时才跳过扫描，避免漏填空洞。
-                        if grid.row_all_team(team_id, ny as u32, nx0 as u32, nx1 as u32) {
-                            continue;
-                        }
-
-                        for nx in nx0..=nx1 {
-                            if bullet.value == 0 {
-                                break 'path;
-                            }
-                            let x_u = nx as u32;
-                            let y_u = ny as u32;
-                            if grid.cell_id(x_u, y_u) != team_id {
-                                grid.set(x_u, y_u, Some(bullet.team));
-                                if profiling {
-                                    cell_writes += 1;
-                                }
-                                bullet.value -= 1;
-                            }
+                        let painted = grid.paint_span_no_shield(
+                            bullet.team,
+                            ny as u32,
+                            nx0 as u32,
+                            nx1 as u32,
+                            &mut bullet.value,
+                        );
+                        if profiling {
+                            cell_writes += painted;
                         }
                     }
                 }
