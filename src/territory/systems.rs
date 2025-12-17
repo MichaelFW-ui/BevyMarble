@@ -6,6 +6,7 @@ use rand::Rng;
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
 use crate::pinball::format_value;
+use crate::profiler::{CounterId, Profiler, ScopeId};
 use crate::territory::{CiwsDistanceMetric, TerritorySettings};
 use super::components::*;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
@@ -287,11 +288,13 @@ impl TargetSpatialIndex {
 
 /// 为 CIWS 构建目标的空间索引（稳定 tie-break：同距离时选 Entity bits 更小的）
 pub fn update_target_spatial_index(
+    profiler: Res<Profiler>,
     mut index: ResMut<TargetSpatialIndex>,
     settings: Res<TerritorySettings>,
     bigballs: Query<(Entity, &TerritoryUnit, &Transform), With<BigBall>>,
     bullets: Query<(Entity, &TerritoryUnit, &Transform), With<Bullet>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex);
     index.clear();
     for (entity, unit, transform) in bigballs.iter() {
         let pos = transform.translation.truncate();
@@ -324,6 +327,7 @@ pub fn update_target_spatial_index(
 
 /// 响应行动事件，生成对应单位
 pub fn spawn_units_from_events(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     mut events: MessageReader<ActionEvent>,
     render_assets: Res<TerritoryRenderAssets>,
@@ -331,7 +335,13 @@ pub fn spawn_units_from_events(
     grid: Res<TerritoryGrid>,
     settings: Res<TerritorySettings>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritorySpawnUnitsFromEvents);
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in events.read() {
+        if profiling {
+            read_events += 1;
+        }
         let (start_x, start_y) = event.team.start_corner();
         let corner_logic = grid.grid_to_logic(start_x, start_y);
 
@@ -369,6 +379,7 @@ pub fn spawn_units_from_events(
             }
         }
     }
+    profiler.add_counter(CounterId::TerritoryActionEventsRead, read_events);
 }
 
 fn spawn_bigball(
@@ -500,11 +511,13 @@ const BULLET_MERGE_RATIO: u64 = 100;
 
 /// 机关枪旋转射击
 pub fn machine_gun_rotate_fire(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     time: Res<Time>,
     mut machine_guns: Query<(&mut MachineGun, &Transform)>,
     render_assets: Res<TerritoryRenderAssets>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryMachineGunRotateFire);
     let delta = time.delta_secs();
 
     for (mut gun, gun_transform) in machine_guns.iter_mut() {
@@ -547,6 +560,7 @@ pub fn machine_gun_rotate_fire(
 
 /// 近防炮瞄准最近敌人射击
 pub fn ciws_target_fire(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     time: Res<Time>,
     mut ciws_query: Query<(&mut CIWS, &Transform)>,
@@ -554,6 +568,7 @@ pub fn ciws_target_fire(
     render_assets: Res<TerritoryRenderAssets>,
     settings: Res<TerritorySettings>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryCiwsTargetFire);
     for (mut ciws, ciws_transform) in ciws_query.iter_mut() {
         ciws.fire_timer.tick(time.delta());
 
@@ -607,8 +622,10 @@ fn spawn_bullet(
 
 /// 子弹边界反射 + 最低速度保证
 pub fn bullet_move(
+    profiler: Res<Profiler>,
     mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBulletMove);
     let bullet_half = BULLET_BOUND_HALF;
     let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + bullet_half;
     let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - bullet_half;
@@ -649,11 +666,15 @@ pub fn bullet_move(
 
 /// 子弹击中地形 - 使用Bresenham追踪路径
 pub fn bullet_hit_terrain(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     mut grid: ResMut<TerritoryGrid>,
     kernel: Res<BulletPaintKernel>,
     mut bullets: Query<(Entity, &mut Bullet, &Transform, &mut LastLogicPosition)>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBulletHitTerrain);
+    let profiling = profiler.is_enabled();
+    let mut cell_writes = 0u64;
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
         let current_logic = transform.translation.truncate();
 
@@ -687,6 +708,9 @@ pub fn bullet_hit_terrain(
                         // 只有空白或敌方领土才染色并消耗
                         if cell_team != Some(bullet.team) {
                             grid.set(nx as u32, ny as u32, Some(bullet.team));
+                            if profiling {
+                                cell_writes += 1;
+                            }
                             bullet.value = bullet.value.saturating_sub(1);
                         }
                     }
@@ -700,10 +724,12 @@ pub fn bullet_hit_terrain(
 
         last_pos.0 = current_logic;
     }
+    profiler.add_counter(CounterId::TerritoryGridCellWrites, cell_writes);
 }
 
 /// 子弹击中单位
 pub fn bullet_hit_units(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     mut collision_events: MessageReader<CollisionStart>,
     bullets: Query<(&Bullet, Entity)>,
@@ -713,7 +739,13 @@ pub fn bullet_hit_units(
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
     mut victory_events: MessageWriter<VictoryEvent>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBulletHitUnits);
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in collision_events.read() {
+        if profiling {
+            read_events += 1;
+        }
         let (bullet_entity, target_entity) = if bullets.contains(event.collider1) {
             (event.collider1, event.collider2)
         } else if bullets.contains(event.collider2) {
@@ -762,20 +794,28 @@ pub fn bullet_hit_units(
             }
         }
     }
+    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
 }
 
 /// 子弹与子弹碰撞
 pub fn bullet_bullet_collision(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     settings: Res<TerritorySettings>,
     mut collision_events: MessageReader<CollisionStart>,
     mut bullets: Query<(&mut Bullet, Entity)>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBulletBulletCollision);
     if !settings.enable_bullet_bullet_collision {
         return;
     }
 
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in collision_events.read() {
+        if profiling {
+            read_events += 1;
+        }
         // 使用 get_many_mut 避免同时借用冲突
         if let Ok([(mut bullet1, entity1), (mut bullet2, entity2)]) =
             bullets.get_many_mut([event.collider1, event.collider2]) {
@@ -794,16 +834,21 @@ pub fn bullet_bullet_collision(
             }
         }
     }
+    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
 }
 
 /// 大球占领格子 + 同步逻辑坐标
 pub fn bigball_occupy_territory(
+    profiler: Res<Profiler>,
     mut grid: ResMut<TerritoryGrid>,
     kernel: Res<BigBallPaintKernel>,
     mut bigballs: Query<(&mut BigBall, &Transform, &mut LogicPosition, &mut LastLogicPosition)>,
     shields: Query<(&Shield, &LogicPosition), Without<BigBall>>,
     mut shield_cache: Local<Vec<ShieldInfo>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBigballOccupyTerritory);
+    let profiling = profiler.is_enabled();
+    let mut occupied_cells = 0u64;
     shield_cache.clear();
     shield_cache.extend(shields.iter().map(|(shield, logic_pos)| ShieldInfo {
         pos: logic_pos.0,
@@ -827,6 +872,9 @@ pub fn bigball_occupy_territory(
                         if grid.occupy(x as u32, y as u32, ball.team, &shield_cache) {
                             if ball.size > 0 {
                                 ball.size -= 1;
+                                if profiling {
+                                    occupied_cells += 1;
+                                }
                             }
                         }
                     }
@@ -836,6 +884,7 @@ pub fn bigball_occupy_territory(
 
         last_logic_pos.0 = current_pos;
     }
+    profiler.add_counter(CounterId::TerritoryGridCellsOccupied, occupied_cells);
 }
 
 #[derive(Clone)]
@@ -901,10 +950,17 @@ fn bresenham_iter(x0: i32, y0: i32, x1: i32, y1: i32) -> BresenhamIter {
 
 /// 大球碰撞（动量守恒+损失数值）
 pub fn bigball_collision(
+    profiler: Res<Profiler>,
     mut collision_events: MessageReader<CollisionStart>,
     mut bigballs: Query<(&mut BigBall, &mut LinearVelocity, &Mass)>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryBigballCollision);
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in collision_events.read() {
+        if profiling {
+            read_events += 1;
+        }
         // 使用 get_many_mut 避免同时借用冲突
         if let Ok([(mut ball1, mut vel1, mass1), (mut ball2, mut vel2, mass2)]) =
             bigballs.get_many_mut([event.collider1, event.collider2]) {
@@ -925,16 +981,19 @@ pub fn bigball_collision(
             }
         }
     }
+    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
 }
 
 /// 清理耗尽的单位
 pub fn cleanup_depleted_units(
+    profiler: Res<Profiler>,
     mut commands: Commands,
     bigballs: Query<(Entity, &BigBall)>,
     machine_guns: Query<(Entity, &MachineGun)>,
     ciws_query: Query<(Entity, &CIWS)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryCleanupDepletedUnits);
     for (entity, ball) in bigballs.iter() {
         if ball.size == 0 {
             commands.entity(entity).despawn();
@@ -959,9 +1018,11 @@ pub fn cleanup_depleted_units(
 
 /// 检测胜利
 pub fn check_victory(
+    profiler: Res<Profiler>,
     units: Query<&TerritoryUnit>,
     mut victory_events: MessageWriter<VictoryEvent>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryCheckVictory);
     let mut team_counts = [0u32; 4];
 
     for unit in units.iter() {
@@ -995,8 +1056,10 @@ pub fn check_victory(
 
 /// 限制单位在战场范围内 + 边界弹性反弹
 pub fn contain_units(
+    profiler: Res<Profiler>,
     mut bigballs: Query<(&mut Transform, &mut LogicPosition, &mut LinearVelocity), With<BigBall>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryContainUnits);
     let r = BIGBALL_RADIUS;
     let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
     let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
@@ -1031,8 +1094,10 @@ pub fn contain_units(
 
 /// 让子弹朝向与其当前速度方向一致（避免物理改变速度后渲染方向滞后）
 pub fn sync_bullet_rotation_to_velocity(
+    profiler: Res<Profiler>,
     mut bullets: Query<(&LinearVelocity, &mut Transform), With<Bullet>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritorySyncBulletRotationToVelocity);
     for (velocity, mut transform) in bullets.iter_mut() {
         let v = velocity.0;
         if v.length_squared() < 1e-6 {
@@ -1045,9 +1110,11 @@ pub fn sync_bullet_rotation_to_velocity(
 
 /// 更新大球数值文本（K/M/B）显示
 pub fn update_bigball_value_text(
+    profiler: Res<Profiler>,
     bigballs: Query<(Entity, &BigBall, Option<&Children>), Changed<BigBall>>,
     mut texts: Query<&mut Text2d, With<BigBallValueText>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryUpdateBigballValueText);
     for (_ball_entity, ball, children) in bigballs.iter() {
         let Some(children) = children else { continue; };
         let value = format_value(ball.size);

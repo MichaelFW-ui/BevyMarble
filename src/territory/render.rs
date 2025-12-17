@@ -6,6 +6,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::camera::visibility::RenderLayers;
 
+use crate::profiler::{Profiler, ScopeId};
 use super::grid::TerritoryGrid;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 
@@ -84,12 +85,14 @@ pub fn setup_grid_render(
 
 /// 更新网格渲染 - 替换整个 buffer
 pub fn update_grid_render(
+    profiler: Res<Profiler>,
     grid: Res<TerritoryGrid>,
     image_handle: Res<GridImageHandle>,
     mut images: ResMut<Assets<Image>>,
     material_handle: Res<GridMaterialHandle>,
     mut materials: ResMut<Assets<GridMaterial>>,
 ) {
+    let _scope = profiler.scope(ScopeId::TerritoryUpdateGridRender);
     if !grid.is_changed() {
         return;
     }

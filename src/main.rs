@@ -1,15 +1,18 @@
 mod colors;
 mod events;
 mod pinball;
+pub mod profiler;
 mod territory;
 
 use avian2d::prelude::*;
 use bevy::prelude::*;
 use bevy::camera::{OrthographicProjection, Projection, ScalingMode, Viewport};
 use bevy::camera::visibility::RenderLayers;
+use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 
 use events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
 use pinball::PinballPlugin;
+use profiler::ProfilerPlugin;
 use territory::TerritoryPlugin;
 
 fn main() {
@@ -22,11 +25,14 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
+        .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_plugins(PhysicsPlugins::default())
         .insert_resource(Gravity(Vec2::NEG_Y * 490.0)) // 重力加速度
         .add_message::<ActionEvent>()
         .add_message::<VictoryEvent>()
         .add_message::<UnitDestroyedEvent>()
+        .add_plugins(ProfilerPlugin)
         .add_plugins(PinballPlugin)
         .add_plugins(TerritoryPlugin)
         .add_systems(Startup, setup)

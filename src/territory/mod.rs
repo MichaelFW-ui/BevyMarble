@@ -6,6 +6,7 @@ mod render;
 mod setup;
 mod systems;
 
+pub use components::{BigBall, Bullet};
 pub use plugin::TerritoryPlugin;
 pub use plugin::TerritorySettings;
 pub use plugin::CiwsDistanceMetric;

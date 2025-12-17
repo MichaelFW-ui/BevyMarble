@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType};
+use crate::profiler::{CounterId, Profiler, ScopeId};
 use super::components::*;
 use super::layout::{PINBALL_HEIGHT, PINBALL_WIDTH};
 use super::utils::{calculate_radius, format_value};
@@ -105,9 +106,11 @@ fn spawn_marble(
 
 /// 检测长期几乎不动的弹珠，给一个向上的升力避免卡死
 pub fn assist_stuck_marbles(
+    profiler: Res<Profiler>,
     time: Res<Time>,
     mut marbles: Query<(&Transform, &mut LinearVelocity, &mut StuckMarbleTracker), With<Marble>>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballAssistStuckMarbles);
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
@@ -138,12 +141,19 @@ pub fn assist_stuck_marbles(
 
 /// 检测弹珠进入加倍区域
 pub fn check_multiplier_collision(
+    profiler: Res<Profiler>,
     mut collision_started: MessageReader<CollisionStart>,
     mut marbles: Query<(&mut Marble, &mut Transform, &mut LinearVelocity)>,
     multiplier_zones: Query<&MultiplierZone>,
     spawn_points: Query<(&PinballSpawnPoint, &Transform), Without<Marble>>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballCheckMultiplierCollision);
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in collision_started.read() {
+        if profiling {
+            read_events += 1;
+        }
         // 检查是否是弹珠和加倍区碰撞
         let (marble_entity, zone_entity) = if marbles.contains(event.collider1) && multiplier_zones.contains(event.collider2) {
             (event.collider1, event.collider2)
@@ -171,17 +181,25 @@ pub fn check_multiplier_collision(
             }
         }
     }
+    profiler.add_counter(CounterId::PinballCollisionStartRead, read_events);
 }
 
 /// 检测弹珠进入行动选择区域
 pub fn check_action_zone_collision(
+    profiler: Res<Profiler>,
     mut collision_started: MessageReader<CollisionStart>,
     mut marbles: Query<(Entity, &mut Marble, &mut Transform, &mut LinearVelocity)>,
     action_zones: Query<&ActionZone>,
     spawn_points: Query<(&PinballSpawnPoint, &Transform), Without<Marble>>,
     mut action_events: MessageWriter<ActionEvent>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballCheckActionZoneCollision);
+    let profiling = profiler.is_enabled();
+    let mut read_events = 0u64;
     for event in collision_started.read() {
+        if profiling {
+            read_events += 1;
+        }
         // 检查是否是弹珠和行动区碰撞
         let (marble_entity, zone_entity) = if marbles.contains(event.collider1) && action_zones.contains(event.collider2) {
             (event.collider1, event.collider2)
@@ -223,13 +241,16 @@ pub fn check_action_zone_collision(
             }
         }
     }
+    profiler.add_counter(CounterId::PinballCollisionStartRead, read_events);
 }
 
 /// 防止弹珠离开弹珠机区域（安全检查）
 pub fn contain_marbles(
+    profiler: Res<Profiler>,
     mut marbles: Query<(&Marble, &mut Transform, &mut LinearVelocity)>,
     spawn_points: Query<(&PinballSpawnPoint, &Transform), Without<Marble>>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballContainMarbles);
     let min_x = -PINBALL_WIDTH / 2.0;
     let max_x = PINBALL_WIDTH / 2.0;
     let min_y = -PINBALL_HEIGHT / 2.0;
@@ -256,12 +277,14 @@ pub fn contain_marbles(
 
 /// 更新小球大小和文本
 pub fn update_marble_display(
+    profiler: Res<Profiler>,
     marbles: Query<(Entity, &Marble, &Transform), Changed<Marble>>,
     mut text_query: Query<(&MarbleText, &mut Text2d, &mut Transform), Without<Marble>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mesh_cache: ResMut<CircleMeshCache>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballUpdateMarbleDisplay);
     for (marble_entity, marble, marble_transform) in marbles.iter() {
         let new_radius = calculate_radius(marble.value);
         let new_mesh = mesh_cache.circle(&mut *meshes, new_radius);
@@ -285,9 +308,11 @@ pub fn update_marble_display(
 
 /// 同步小球和文本位置
 pub fn sync_marble_text_position(
+    profiler: Res<Profiler>,
     marbles: Query<(Entity, &Transform), (With<Marble>, Changed<Transform>)>,
     mut text_query: Query<(&MarbleText, &mut Transform), Without<Marble>>,
 ) {
+    let _scope = profiler.scope(ScopeId::PinballSyncMarbleTextPosition);
     for (marble_entity, marble_transform) in marbles.iter() {
         for (marker, mut text_transform) in text_query.iter_mut() {
             if marker.marble_entity == marble_entity {
