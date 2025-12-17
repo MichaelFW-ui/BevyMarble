@@ -33,10 +33,11 @@ pub enum ScopeId {
     PinballAssistStuckMarbles = 19,
     PinballUpdateMarbleDisplay = 20,
     PinballSyncMarbleTextPosition = 21,
+    FixedMainLoop = 22,
 }
 
 impl ScopeId {
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 23;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -62,6 +63,7 @@ impl ScopeId {
             ScopeId::PinballAssistStuckMarbles => "pinball/assist_stuck_marbles",
             ScopeId::PinballUpdateMarbleDisplay => "pinball/update_marble_display",
             ScopeId::PinballSyncMarbleTextPosition => "pinball/sync_marble_text_position",
+            ScopeId::FixedMainLoop => "bevy/fixed_main_loop",
         }
     }
 }
@@ -89,6 +91,7 @@ const ALL_SCOPES: [ScopeId; ScopeId::COUNT] = [
     ScopeId::PinballAssistStuckMarbles,
     ScopeId::PinballUpdateMarbleDisplay,
     ScopeId::PinballSyncMarbleTextPosition,
+    ScopeId::FixedMainLoop,
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -99,10 +102,12 @@ pub enum CounterId {
     PinballCollisionStartRead = 2,
     TerritoryGridCellWrites = 3,
     TerritoryGridCellsOccupied = 4,
+    TerritoryBulletPathPoints = 5,
+    TerritoryBulletKernelPointsEst = 6,
 }
 
 impl CounterId {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 7;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -111,6 +116,8 @@ impl CounterId {
             CounterId::PinballCollisionStartRead => "pinball/collision_start/read",
             CounterId::TerritoryGridCellWrites => "territory/grid/cell_writes",
             CounterId::TerritoryGridCellsOccupied => "territory/grid/cells_occupied",
+            CounterId::TerritoryBulletPathPoints => "territory/bullet/path_points",
+            CounterId::TerritoryBulletKernelPointsEst => "territory/bullet/kernel_points_est",
         }
     }
 }
@@ -121,6 +128,8 @@ const ALL_COUNTERS: [CounterId; CounterId::COUNT] = [
     CounterId::PinballCollisionStartRead,
     CounterId::TerritoryGridCellWrites,
     CounterId::TerritoryGridCellsOccupied,
+    CounterId::TerritoryBulletPathPoints,
+    CounterId::TerritoryBulletKernelPointsEst,
 ];
 
 #[derive(Resource)]
@@ -131,6 +140,7 @@ pub struct Profiler {
     scopes: [ScopeStats; ScopeId::COUNT],
     counters: [AtomicU64; CounterId::COUNT],
     frame_update_start: std::sync::Mutex<Option<Instant>>,
+    fixed_loop_start: std::sync::Mutex<Option<Instant>>,
 }
 
 #[derive(Debug)]
@@ -155,6 +165,7 @@ impl Default for Profiler {
             }),
             counters: std::array::from_fn(|_| AtomicU64::new(0)),
             frame_update_start: std::sync::Mutex::new(None),
+            fixed_loop_start: std::sync::Mutex::new(None),
         }
     }
 }
@@ -192,6 +203,29 @@ impl Profiler {
             self.frame_update_ns
                 .store(start.elapsed().as_nanos().min(u64::MAX as u128) as u64, Ordering::Relaxed);
         }
+    }
+
+    pub fn fixed_loop_begin(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let mut guard = self.fixed_loop_start.lock().expect("poisoned Profiler mutex");
+        *guard = Some(Instant::now());
+    }
+
+    pub fn fixed_loop_end(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let start = self
+            .fixed_loop_start
+            .lock()
+            .expect("poisoned Profiler mutex")
+            .take();
+        let Some(start) = start else {
+            return;
+        };
+        self.record(ScopeId::FixedMainLoop, start.elapsed());
     }
 
     pub fn scope(&self, id: ScopeId) -> ScopeGuard<'_> {
@@ -246,6 +280,8 @@ impl Plugin for ProfilerPlugin {
         app.init_resource::<Profiler>()
             .add_systems(Startup, spawn_overlay)
             .add_systems(First, profiler_begin_frame)
+            .add_systems(FixedFirst, fixed_loop_begin)
+            .add_systems(FixedLast, fixed_loop_end)
             .add_systems(Last, (toggle_overlay, position_overlay, update_overlay, profiler_end_frame).chain());
     }
 }
@@ -256,6 +292,14 @@ fn profiler_begin_frame(profiler: Res<Profiler>) {
 
 fn profiler_end_frame(profiler: Res<Profiler>) {
     profiler.end_frame();
+}
+
+fn fixed_loop_begin(profiler: Res<Profiler>) {
+    profiler.fixed_loop_begin();
+}
+
+fn fixed_loop_end(profiler: Res<Profiler>) {
+    profiler.fixed_loop_end();
 }
 
 fn spawn_overlay(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -473,8 +517,8 @@ fn update_overlay(
     s.push_str(&format!(
         "Update {update_ms:>6.2}ms | accounted {accounted_ms:>6.2}ms | other {unaccounted_ms:>6.2}ms | F3 toggle\n"
     ));
-    s.push_str(&format!("Entities total {total_entities}\n"));
-    s.push_str(&cache.snapshot_lines);
+        s.push_str(&format!("Entities total {total_entities}\n"));
+        s.push_str(&cache.snapshot_lines);
 
     if let Ok(mut t) = text.single_mut() {
         t.0 = s;

@@ -675,6 +675,9 @@ pub fn bullet_hit_terrain(
     let _scope = profiler.scope(ScopeId::TerritoryBulletHitTerrain);
     let profiling = profiler.is_enabled();
     let mut cell_writes = 0u64;
+    let mut path_points = 0u64;
+    let mut kernel_points_est = 0u64;
+    let kernel_len = kernel.offsets.len() as u64;
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
         let current_logic = transform.translation.truncate();
 
@@ -691,6 +694,10 @@ pub fn bullet_hit_terrain(
                 }
 
                 if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
+                    if profiling {
+                        path_points += 1;
+                        kernel_points_est += kernel_len;
+                    }
                     // 以路径点为中心，染一个圆形区域（查表 offset，避免内层双循环）
                     for (dx, dy) in kernel.offsets.iter().copied() {
                         if bullet.value == 0 {
@@ -725,6 +732,8 @@ pub fn bullet_hit_terrain(
         last_pos.0 = current_logic;
     }
     profiler.add_counter(CounterId::TerritoryGridCellWrites, cell_writes);
+    profiler.add_counter(CounterId::TerritoryBulletPathPoints, path_points);
+    profiler.add_counter(CounterId::TerritoryBulletKernelPointsEst, kernel_points_est);
 }
 
 /// 子弹击中单位
