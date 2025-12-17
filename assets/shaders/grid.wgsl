@@ -1,10 +1,8 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
-// Grid data: 0 = empty, 1 = red, 2 = blue, 3 = green, 4 = yellow
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<storage, read> grid_data: array<u32>;
-
-// Grid dimensions
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> grid_size: vec2<u32>;
+// Grid texture: R8Unorm
+// 0 = empty, 1 = red, 2 = blue, 3 = green, 4 = yellow
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var grid_tex: texture_2d<f32>;
 
 // Color palette (pre-defined, matching the original colors)
 fn get_color(team: u32) -> vec4<f32> {
@@ -21,6 +19,8 @@ fn get_color(team: u32) -> vec4<f32> {
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let uv = mesh.uv;
 
+    let grid_size = textureDimensions(grid_tex);
+
     // UV: (0,0) 左上, (1,1) 右下
     // Grid: y=0 在底部
     // 翻转 Y
@@ -31,11 +31,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let x = min(grid_x, grid_size.x - 1u);
     let y = min(grid_y, grid_size.y - 1u);
 
-    // Calculate buffer index
-    let index = y * grid_size.x + x;
-
-    // Read team value from buffer
-    let team = grid_data[index];
+    // Read team value from texture (R8Unorm: byte -> [0,1])
+    let raw = textureLoad(grid_tex, vec2<i32>(i32(x), i32(y)), 0).x;
+    let team = min(4u, u32(round(raw * 255.0)));
 
     return get_color(team);
 }

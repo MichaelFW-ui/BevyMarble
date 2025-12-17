@@ -9,7 +9,7 @@ use crate::pinball::format_value;
 use crate::territory::TerritorySettings;
 use super::components::*;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
-use super::grid::TerritoryGrid;
+use super::grid::{ShieldInfo, TerritoryGrid};
 
 const BIGBALL_RADIUS: f32 = 15.0;
 const BIGBALL_SPEED: f32 = 100.0;
@@ -104,6 +104,31 @@ impl Default for BulletPaintKernel {
         }
 
         Self { offsets }
+    }
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct BigBallPaintKernel {
+    pub offsets: Vec<(i32, i32)>,
+    pub radius: i32,
+}
+
+impl Default for BigBallPaintKernel {
+    fn default() -> Self {
+        let cells_per_unit = 1024.0 / TERRITORY_LOGIC_WIDTH;
+        // 保持与原先 `as i32` 的行为一致（向 0 取整）
+        let radius = (BIGBALL_RADIUS * cells_per_unit).max(1.0) as i32;
+
+        let mut offsets = Vec::new();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    offsets.push((dx, dy));
+                }
+            }
+        }
+
+        Self { offsets, radius }
     }
 }
 
@@ -738,15 +763,17 @@ pub fn bullet_bullet_collision(
 /// 大球占领格子 + 同步逻辑坐标
 pub fn bigball_occupy_territory(
     mut grid: ResMut<TerritoryGrid>,
+    kernel: Res<BigBallPaintKernel>,
     mut bigballs: Query<(&mut BigBall, &Transform, &mut LogicPosition, &mut LastLogicPosition)>,
     shields: Query<(&Shield, &LogicPosition), Without<BigBall>>,
+    mut shield_cache: Local<Vec<ShieldInfo>>,
 ) {
-    let shield_data: Vec<_> = shields.iter()
-        .map(|(shield, logic_pos)| (logic_pos.0, shield.radius, shield.team))
-        .collect();
-
-    // 计算大球在格子坐标系中的半径
-    let ball_grid_radius = (BIGBALL_RADIUS * grid.width as f32 / TERRITORY_LOGIC_WIDTH) as i32;
+    shield_cache.clear();
+    shield_cache.extend(shields.iter().map(|(shield, logic_pos)| ShieldInfo {
+        pos: logic_pos.0,
+        radius_sq: shield.radius * shield.radius,
+        team: shield.team,
+    }));
 
     for (mut ball, transform, mut logic_pos, mut last_logic_pos) in bigballs.iter_mut() {
         // 更新逻辑坐标
@@ -755,20 +782,15 @@ pub fn bigball_occupy_territory(
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
             for (cx, cy) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32) {
-                // 对于路径上的每个点，占领以它为中心的圆形区域
-                for dy in -ball_grid_radius..=ball_grid_radius {
-                    for dx in -ball_grid_radius..=ball_grid_radius {
-                        // 检查是否在圆形范围内
-                        if dx * dx + dy * dy <= ball_grid_radius * ball_grid_radius {
-                            let x = cx + dx;
-                            let y = cy + dy;
+                // 对于路径上的每个点，占领以它为中心的圆形区域（查表 offset）
+                for (dx, dy) in kernel.offsets.iter().copied() {
+                    let x = cx + dx;
+                    let y = cy + dy;
 
-                            if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
-                                if grid.occupy(x as u32, y as u32, ball.team, &shield_data) {
-                                    if ball.size > 0 {
-                                        ball.size -= 1;
-                                    }
-                                }
+                    if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
+                        if grid.occupy(x as u32, y as u32, ball.team, &shield_cache) {
+                            if ball.size > 0 {
+                                ball.size -= 1;
                             }
                         }
                     }
@@ -907,29 +929,31 @@ pub fn check_victory(
     let mut team_counts = [0u32; 4];
 
     for unit in units.iter() {
-        let index = match unit.team {
-            TeamColor::Red => 0,
-            TeamColor::Blue => 1,
-            TeamColor::Green => 2,
-            TeamColor::Yellow => 3,
-        };
-        team_counts[index] += 1;
+        team_counts[unit.team.index()] += 1;
     }
 
-    let alive_teams: Vec<_> = team_counts.iter().enumerate()
-        .filter(|&(_, count)| *count > 0)
-        .map(|(i, _)| i)
-        .collect();
+    let mut alive_count = 0usize;
+    let mut last_alive: Option<TeamColor> = None;
+    for (i, count) in team_counts.iter().enumerate() {
+        if *count > 0 {
+            alive_count += 1;
+            last_alive = match i {
+                0 => Some(TeamColor::Red),
+                1 => Some(TeamColor::Blue),
+                2 => Some(TeamColor::Green),
+                3 => Some(TeamColor::Yellow),
+                _ => None,
+            };
+            if alive_count > 1 {
+                break;
+            }
+        }
+    }
 
-    if alive_teams.len() == 1 {
-        let winner = match alive_teams[0] {
-            0 => TeamColor::Red,
-            1 => TeamColor::Blue,
-            2 => TeamColor::Green,
-            3 => TeamColor::Yellow,
-            _ => unreachable!(),
-        };
-        victory_events.write(VictoryEvent { winner });
+    if alive_count == 1 {
+        if let Some(winner) = last_alive {
+            victory_events.write(VictoryEvent { winner });
+        }
     }
 }
 

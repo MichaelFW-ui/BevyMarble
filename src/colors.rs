@@ -21,22 +21,22 @@ impl TeamColor {
         }
     }
 
-    /// 写入网格/缓冲区的 ID（0 表示空）
-    pub fn to_id(&self) -> u32 {
+    /// 写入网格/纹理的 ID（0 表示空）
+    pub fn to_id(&self) -> u8 {
         match self {
-            TeamColor::Red => 1,
-            TeamColor::Blue => 2,
-            TeamColor::Green => 3,
-            TeamColor::Yellow => 4,
+            TeamColor::Red => 1u8,
+            TeamColor::Blue => 2u8,
+            TeamColor::Green => 3u8,
+            TeamColor::Yellow => 4u8,
         }
     }
 
-    pub fn from_id(id: u32) -> Option<Self> {
+    pub fn from_id(id: u8) -> Option<Self> {
         match id {
-            1 => Some(TeamColor::Red),
-            2 => Some(TeamColor::Blue),
-            3 => Some(TeamColor::Green),
-            4 => Some(TeamColor::Yellow),
+            1u8 => Some(TeamColor::Red),
+            2u8 => Some(TeamColor::Blue),
+            3u8 => Some(TeamColor::Green),
+            4u8 => Some(TeamColor::Yellow),
             _ => None,
         }
     }
