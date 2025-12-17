@@ -17,12 +17,28 @@ pub struct TerritoryGrid {
     cells: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    row_words: usize,
+    // 每队一份位图（按“行”对齐，方便按区间检查）
+    team_row_bits: [Vec<u64>; 4],
 }
 
 impl TerritoryGrid {
     pub fn new(width: u32, height: u32) -> Self {
         let total_cells = (width * height) as usize;
-        let mut cells = vec![0u8; total_cells];
+        let row_words = ((width as usize) + 63) / 64;
+        let empty_bits = vec![0u64; (height as usize) * row_words];
+        let mut grid = Self {
+            cells: vec![0u8; total_cells],
+            width,
+            height,
+            row_words,
+            team_row_bits: [
+                empty_bits.clone(),
+                empty_bits.clone(),
+                empty_bits.clone(),
+                empty_bits,
+            ],
+        };
 
         // 初始化四个角落（与 TeamColor::start_corner 一致）
         let corners = TeamColor::all().map(|team| {
@@ -37,18 +53,89 @@ impl TerritoryGrid {
                     let nx = x.saturating_add(if x == 0 { dx } else { -(dx as i32) as u32 });
                     let ny = y.saturating_add(if y == 0 { dy } else { -(dy as i32) as u32 });
                     if nx < width && ny < height {
-                        let index = (ny * width + nx) as usize;
-                        cells[index] = team.to_id();
+                        grid.set_id(nx, ny, team.to_id());
                     }
                 }
             }
         }
 
-        Self {
-            cells,
-            width,
-            height,
+        grid
+    }
+
+    #[inline]
+    fn row_bit_index(&self, x: u32, y: u32) -> (usize, u64) {
+        let word = (x as usize) / 64;
+        let bit = (x as usize) % 64;
+        let idx = (y as usize) * self.row_words + word;
+        (idx, 1u64 << bit)
+    }
+
+    #[inline]
+    fn set_id(&mut self, x: u32, y: u32, new_id: u8) {
+        let idx = (y * self.width + x) as usize;
+        let old_id = self.cells[idx];
+        if old_id == new_id {
+            return;
         }
+
+        let (word_idx, mask) = self.row_bit_index(x, y);
+        if (1..=4).contains(&old_id) {
+            let bits = &mut self.team_row_bits[(old_id - 1) as usize];
+            bits[word_idx] &= !mask;
+        }
+        if (1..=4).contains(&new_id) {
+            let bits = &mut self.team_row_bits[(new_id - 1) as usize];
+            bits[word_idx] |= mask;
+        }
+
+        self.cells[idx] = new_id;
+    }
+
+    #[inline]
+    pub fn cell_id(&self, x: u32, y: u32) -> u8 {
+        self.cells[(y * self.width + x) as usize]
+    }
+
+    /// 证明式快速判断：这一行区间 [x0, x1] 是否全部属于 team_id（1..=4）。
+    /// 只有在“全是己方”时才返回 true，因此不会漏掉任何空洞。
+    pub fn row_all_team(&self, team_id: u8, y: u32, x0: u32, x1: u32) -> bool {
+        if !(1..=4).contains(&team_id) {
+            return false;
+        }
+        if y >= self.height || x0 > x1 || x1 >= self.width {
+            return false;
+        }
+        let bits = &self.team_row_bits[(team_id - 1) as usize];
+
+        let start_word = (x0 as usize) / 64;
+        let end_word = (x1 as usize) / 64;
+        let row_base = (y as usize) * self.row_words;
+
+        let start_bit = (x0 as usize) % 64;
+        let end_bit = (x1 as usize) % 64;
+
+        if start_word == end_word {
+            let mask = if end_bit == 63 {
+                u64::MAX << start_bit
+            } else {
+                ((1u64 << (end_bit + 1)) - 1) & (u64::MAX << start_bit)
+            };
+            return (bits[row_base + start_word] & mask) == mask;
+        }
+
+        let start_mask = u64::MAX << start_bit;
+        if (bits[row_base + start_word] & start_mask) != start_mask {
+            return false;
+        }
+
+        for w in (start_word + 1)..end_word {
+            if bits[row_base + w] != u64::MAX {
+                return false;
+            }
+        }
+
+        let end_mask = if end_bit == 63 { u64::MAX } else { (1u64 << (end_bit + 1)) - 1 };
+        (bits[row_base + end_word] & end_mask) == end_mask
     }
 
     /// 获取指定位置的所属颜色
@@ -56,13 +143,13 @@ impl TerritoryGrid {
         if x >= self.width || y >= self.height {
             return None;
         }
-        TeamColor::from_id(self.cells[(y * self.width + x) as usize])
+        TeamColor::from_id(self.cell_id(x, y))
     }
 
     /// 设置指定位置的所属颜色
     pub fn set(&mut self, x: u32, y: u32, team: Option<TeamColor>) {
         if x < self.width && y < self.height {
-            self.cells[(y * self.width + x) as usize] = team.map(|t| t.to_id()).unwrap_or(0u8);
+            self.set_id(x, y, team.map(|t| t.to_id()).unwrap_or(0u8));
         }
     }
 
@@ -78,7 +165,7 @@ impl TerritoryGrid {
         }
 
         if shields.is_empty() {
-            self.set(x, y, Some(team));
+            self.set_id(x, y, team.to_id());
             return true;
         }
 
@@ -91,7 +178,7 @@ impl TerritoryGrid {
             }
         }
 
-        self.set(x, y, Some(team));
+        self.set_id(x, y, team.to_id());
         true // 成功占领了新领土
     }
 

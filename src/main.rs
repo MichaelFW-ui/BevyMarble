@@ -9,6 +9,8 @@ use bevy::prelude::*;
 use bevy::camera::{OrthographicProjection, Projection, ScalingMode, Viewport};
 use bevy::camera::visibility::RenderLayers;
 use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
+use bevy::time::Virtual;
+use std::time::Duration;
 
 use events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
 use pinball::PinballPlugin;
@@ -35,8 +37,14 @@ fn main() {
         .add_plugins(ProfilerPlugin)
         .add_plugins(PinballPlugin)
         .add_plugins(TerritoryPlugin)
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (configure_time, setup))
         .run();
+}
+
+fn configure_time(mut time: ResMut<Time<Virtual>>) {
+    // 限制“追帧尖峰”：当一帧非常慢时，FixedUpdate 不会在单帧内无限补跑。
+    // 代价是过载时游戏时间会变慢，但能避免死亡螺旋（卡顿越卡越卡）。
+    time.set_max_delta(Duration::from_millis(50));
 }
 
 fn setup(mut commands: Commands, window: Single<&Window>) {

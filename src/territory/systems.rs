@@ -85,7 +85,8 @@ pub fn setup_territory_assets(
 
 #[derive(Resource, Debug, Clone)]
 pub struct BulletPaintKernel {
-    pub offsets: Vec<(i32, i32)>,
+    pub row_spans: Vec<(i32, i32)>, // (dy, dx_max)
+    pub points_est: u64,
 }
 
 impl Default for BulletPaintKernel {
@@ -95,16 +96,15 @@ impl Default for BulletPaintKernel {
         let cells_per_unit = 1024.0 / TERRITORY_LOGIC_WIDTH;
         let radius = (BULLET_RADIUS * cells_per_unit).ceil().max(1.0) as i32;
 
-        let mut offsets = Vec::new();
+        let mut row_spans = Vec::new();
+        let mut points_est = 0u64;
         for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= radius * radius {
-                    offsets.push((dx, dy));
-                }
-            }
+            let dx_max = (((radius * radius - dy * dy) as f64).sqrt().floor() as i32).max(0);
+            row_spans.push((dy, dx_max));
+            points_est += (dx_max as i64 * 2 + 1).max(0) as u64;
         }
 
-        Self { offsets }
+        Self { row_spans, points_est }
     }
 }
 
@@ -677,9 +677,10 @@ pub fn bullet_hit_terrain(
     let mut cell_writes = 0u64;
     let mut path_points = 0u64;
     let mut kernel_points_est = 0u64;
-    let kernel_len = kernel.offsets.len() as u64;
+    let kernel_points = kernel.points_est;
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
         let current_logic = transform.translation.truncate();
+        let team_id = bullet.team.to_id();
 
         // 跳过第一帧（子弹还没移动）
         if last_pos.0 == current_logic {
@@ -687,8 +688,7 @@ pub fn bullet_hit_terrain(
         }
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_pos.0), grid.logic_to_grid(current_logic)) {
-            // 跳过起点，只染路径上的新格子（避免分配 Vec）
-            for (x, y) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32).skip(1) {
+            'path: for (x, y) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32).skip(1) {
                 if bullet.value == 0 {
                     break;
                 }
@@ -696,29 +696,49 @@ pub fn bullet_hit_terrain(
                 if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
                     if profiling {
                         path_points += 1;
-                        kernel_points_est += kernel_len;
+                        kernel_points_est += kernel_points;
                     }
-                    // 以路径点为中心，染一个圆形区域（查表 offset，避免内层双循环）
-                    for (dx, dy) in kernel.offsets.iter().copied() {
+
+                    for (dy, dx_max) in kernel.row_spans.iter().copied() {
                         if bullet.value == 0 {
-                            break;
+                            break 'path;
                         }
 
-                        let nx = x + dx;
                         let ny = y + dy;
-
-                        if nx < 0 || ny < 0 || nx >= grid.width as i32 || ny >= grid.height as i32 {
+                        if ny < 0 || ny >= grid.height as i32 {
                             continue;
                         }
 
-                        let cell_team = grid.get(nx as u32, ny as u32);
-                        // 只有空白或敌方领土才染色并消耗
-                        if cell_team != Some(bullet.team) {
-                            grid.set(nx as u32, ny as u32, Some(bullet.team));
-                            if profiling {
-                                cell_writes += 1;
+                        let mut nx0 = x - dx_max;
+                        let mut nx1 = x + dx_max;
+                        if nx0 < 0 {
+                            nx0 = 0;
+                        }
+                        if nx1 >= grid.width as i32 {
+                            nx1 = grid.width as i32 - 1;
+                        }
+                        if nx0 > nx1 {
+                            continue;
+                        }
+
+                        // 正确性保证：只有在“这一整段都已是己方”时才跳过扫描，避免漏填空洞。
+                        if grid.row_all_team(team_id, ny as u32, nx0 as u32, nx1 as u32) {
+                            continue;
+                        }
+
+                        for nx in nx0..=nx1 {
+                            if bullet.value == 0 {
+                                break 'path;
                             }
-                            bullet.value = bullet.value.saturating_sub(1);
+                            let x_u = nx as u32;
+                            let y_u = ny as u32;
+                            if grid.cell_id(x_u, y_u) != team_id {
+                                grid.set(x_u, y_u, Some(bullet.team));
+                                if profiling {
+                                    cell_writes += 1;
+                                }
+                                bullet.value -= 1;
+                            }
                         }
                     }
                 }
