@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::storage::ShaderStorageBuffer;
+use bevy::shader::ShaderRef;
+use bevy::sprite_render::Material2d;
 use bevy::camera::visibility::RenderLayers;
 
 use crate::colors::TeamColor;
@@ -10,101 +13,108 @@ use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 #[derive(Component)]
 pub struct GridRenderer;
 
+/// GPU 网格材质
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct GridMaterial {
+    #[storage(0, read_only)]
+    pub grid_buffer: Handle<ShaderStorageBuffer>,
+    #[uniform(1)]
+    pub grid_size: GridSize,
+}
+
+#[derive(ShaderType, Debug, Clone, Copy)]
+pub struct GridSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Material2d for GridMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/grid.wgsl".into()
+    }
+}
+
+/// 存储材质 Handle 的资源，用于后续更新
+#[derive(Resource)]
+pub struct GridMaterialHandle(pub Handle<GridMaterial>);
+
+/// 存储 buffer Handle 的资源，用于后续更新
+#[derive(Resource)]
+pub struct GridBufferHandle(pub Handle<ShaderStorageBuffer>);
+
+/// 将 TerritoryGrid 转换为 GPU buffer 数据
+fn grid_to_buffer_data(grid: &TerritoryGrid) -> Vec<u32> {
+    grid.cells()
+        .iter()
+        .map(|cell| match cell {
+            Some(TeamColor::Red) => 1u32,
+            Some(TeamColor::Blue) => 2u32,
+            Some(TeamColor::Green) => 3u32,
+            Some(TeamColor::Yellow) => 4u32,
+            None => 0u32,
+        })
+        .collect()
+}
+
 /// 初始化网格渲染
 pub fn setup_grid_render(
     mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut materials: ResMut<Assets<GridMaterial>>,
     grid: Res<TerritoryGrid>,
 ) {
-    let image = create_grid_image(&grid);
-    let image_handle = images.add(image);
+    // 创建 storage buffer
+    let buffer_data = grid_to_buffer_data(&grid);
+    let buffer_handle = buffers.add(ShaderStorageBuffer::from(buffer_data));
+
+    // 创建材质
+    let material_handle = materials.add(GridMaterial {
+        grid_buffer: buffer_handle.clone(),
+        grid_size: GridSize {
+            width: grid.width,
+            height: grid.height,
+        },
+    });
+
+    // 保存 handle 用于后续更新
+    commands.insert_resource(GridMaterialHandle(material_handle.clone()));
+    commands.insert_resource(GridBufferHandle(buffer_handle));
+
+    // 创建一个覆盖整个战场的矩形 mesh
+    let mesh_handle = meshes.add(Rectangle::new(TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT));
 
     // 在右侧显示网格
     commands.spawn((
         GridRenderer,
         RenderLayers::layer(1),
-        Sprite {
-            image: image_handle.clone(),
-            custom_size: Some(Vec2::new(TERRITORY_LOGIC_WIDTH, TERRITORY_LOGIC_HEIGHT)),
-            ..default()
-        },
+        Mesh2d(mesh_handle),
+        MeshMaterial2d(material_handle),
         Transform::from_translation(Vec3::ZERO),
     ));
 }
 
-/// 更新网格渲染
+/// 更新网格渲染 - 替换整个 buffer
 pub fn update_grid_render(
     grid: Res<TerritoryGrid>,
-    mut images: ResMut<Assets<Image>>,
-    query: Query<&Sprite, With<GridRenderer>>,
+    buffer_handle: Res<GridBufferHandle>,
+    material_handle: Res<GridMaterialHandle>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut materials: ResMut<Assets<GridMaterial>>,
 ) {
     if !grid.is_changed() {
         return;
     }
 
-    for sprite in query.iter() {
-        if let Some(image) = images.get_mut(&sprite.image) {
-            update_grid_image(image, &grid);
-        }
-    }
-}
+    // 创建新的 buffer 数据
+    let buffer_data = grid_to_buffer_data(&grid);
 
-fn create_grid_image(grid: &TerritoryGrid) -> Image {
-    let width = grid.width;
-    let height = grid.height;
-    let mut data = vec![0u8; (width * height * 4) as usize];
+    // 直接替换 buffer asset
+    buffers.insert(&buffer_handle.0, ShaderStorageBuffer::from(buffer_data));
 
-    for y in 0..height {
-        for x in 0..width {
-            let index = ((y * width + x) * 4) as usize;
-            // Image 的 y=0 在顶端；grid_y=0 约定为底部，所以这里需要翻转 y。
-            let grid_y = height - 1 - y;
-            // 领土颜色比单位颜色暗淡，便于区分
-            let color = match grid.get(x, grid_y) {
-                Some(TeamColor::Red) => [115, 25, 25, 255],
-                Some(TeamColor::Blue) => [25, 50, 115, 255],
-                Some(TeamColor::Green) => [25, 100, 38, 255],
-                Some(TeamColor::Yellow) => [115, 108, 25, 255],
-                None => [40, 40, 45, 255], // 未占领区域
-            };
-
-            data[index..index + 4].copy_from_slice(&color);
-        }
-    }
-
-    Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        Default::default(),
-    )
-}
-
-fn update_grid_image(image: &mut Image, grid: &TerritoryGrid) {
-    let width = grid.width;
-    let height = grid.height;
-
-    if let Some(data) = &mut image.data {
-        for y in 0..height {
-            for x in 0..width {
-                let index = ((y * width + x) * 4) as usize;
-                let grid_y = height - 1 - y;
-                // 领土颜色比单位颜色暗淡，便于区分
-                let color = match grid.get(x, grid_y) {
-                    Some(TeamColor::Red) => [115, 25, 25, 255],
-                    Some(TeamColor::Blue) => [25, 50, 115, 255],
-                    Some(TeamColor::Green) => [25, 100, 38, 255],
-                    Some(TeamColor::Yellow) => [115, 108, 25, 255],
-                    None => [40, 40, 45, 255],
-                };
-
-                data[index..index + 4].copy_from_slice(&color);
-            }
-        }
+    // 触发材质更新
+    if let Some(material) = materials.get_mut(&material_handle.0) {
+        // 触发变化检测
+        material.grid_buffer = buffer_handle.0.clone();
     }
 }

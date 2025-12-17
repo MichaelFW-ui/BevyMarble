@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::sprite_render::Material2dPlugin;
 
 use super::grid::TerritoryGrid;
 use super::render::*;
@@ -22,7 +23,8 @@ pub struct TerritoryPlugin;
 
 impl Plugin for TerritoryPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(TerritoryGrid::new(1024, 1024))
+        app.add_plugins(Material2dPlugin::<GridMaterial>::default())
+            .insert_resource(TerritoryGrid::new(1024, 1024))
             .insert_resource(TerritorySettings::default())
             .init_resource::<BulletPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
