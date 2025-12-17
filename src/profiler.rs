@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use bevy::time::Real;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum ScopeId {
     TerritorySpawnUnitsFromEvents = 0,
@@ -450,6 +450,12 @@ fn update_overlay(
                 (id, sum, max, calls)
             })
             .collect();
+
+        let fixed = rows
+            .iter()
+            .find(|(id, _, _, _)| *id == ScopeId::FixedMainLoop)
+            .copied()
+            .unwrap_or((ScopeId::FixedMainLoop, 0, 0, 0));
         rows.sort_by_key(|(_, sum, _, _)| Reverse(*sum));
 
         let bullets_n = bullets.iter().count();
@@ -466,17 +472,28 @@ fn update_overlay(
 
         let mut s = String::new();
         s.push_str(&format!("Entities: Bullet {bullets_n} | BigBall {bigballs_n}\n"));
+        if fixed.3 != 0 {
+            let fixed_sum_ms = fixed.1 as f64 / 1_000_000.0;
+            let fixed_avg_ms = fixed_sum_ms / fixed.3 as f64;
+            s.push_str(&format!(
+                "Fixed steps/s: {} | fixed sum {fixed_sum_ms:.2}ms | avg {fixed_avg_ms:.2}ms\n",
+                fixed.3
+            ));
+        }
         for (id, v) in counters {
             s.push_str(&format!("{}: {v}\n", id.name()));
         }
-        s.push_str("Top systems (1s sum / 1s max):\n");
+        s.push_str("Top systems (1s sum / 1s max / calls):\n");
         for (id, sum, max, calls) in rows.into_iter().take(8) {
             if calls == 0 {
                 continue;
             }
             let sum_ms = sum as f64 / 1_000_000.0;
             let max_ms = max as f64 / 1_000_000.0;
-            s.push_str(&format!("  {sum_ms:>6.2} / {max_ms:>6.2}  {}\n", id.name()));
+            s.push_str(&format!(
+                "  {sum_ms:>6.2} / {max_ms:>6.2} / {calls:<5}  {}\n",
+                id.name()
+            ));
         }
 
         cache.snapshot_lines = s;
@@ -515,7 +532,7 @@ fn update_overlay(
         "FPS {fps:>5.1} | frame {frame_ms:>5.2}ms | 1s avg {avg_1s_ms:>5.2}ms | 1s max {max_1s_ms:>5.2}ms\n"
     ));
     s.push_str(&format!(
-        "Update {update_ms:>6.2}ms | accounted {accounted_ms:>6.2}ms | other {unaccounted_ms:>6.2}ms | F3 toggle\n"
+        "Main {update_ms:>6.2}ms | accounted {accounted_ms:>6.2}ms | other {unaccounted_ms:>6.2}ms | F3 toggle\n"
     ));
         s.push_str(&format!("Entities total {total_entities}\n"));
         s.push_str(&cache.snapshot_lines);
