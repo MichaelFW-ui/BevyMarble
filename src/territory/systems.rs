@@ -1,4 +1,3 @@
-use avian2d::prelude::*;
 use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 use rand::Rng;
@@ -21,6 +20,7 @@ const BULLET_BOUND_HALF: f32 = BULLET_LENGTH / 2.0;
 const BULLET_SPEED: f32 = 250.0;
 const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
+const HQ_HALF_SIZE: f32 = 15.0;
 
 #[derive(Resource, Clone)]
 pub struct TerritoryRenderAssets {
@@ -292,7 +292,7 @@ pub fn update_target_spatial_index(
     mut index: ResMut<TargetSpatialIndex>,
     settings: Res<TerritorySettings>,
     bigballs: Query<(Entity, &TerritoryUnit, &Transform), With<BigBall>>,
-    bullets: Query<(Entity, &TerritoryUnit, &Transform), With<Bullet>>,
+    bullets: Query<(Entity, &Bullet, &Transform), With<Bullet>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex);
     index.clear();
@@ -312,13 +312,13 @@ pub fn update_target_spatial_index(
         return;
     }
 
-    for (entity, unit, transform) in bullets.iter() {
+    for (entity, bullet, transform) in bullets.iter() {
         let pos = transform.translation.truncate();
         if let Some((x, y)) = index.cell_of(pos) {
             let idx = index.bucket_index(x, y);
             index.buckets[idx].push(TargetEntry {
                 entity,
-                team: unit.team,
+                team: bullet.team,
                 pos,
             });
         }
@@ -403,18 +403,10 @@ fn spawn_bigball(
             TerritoryUnit { team },
             LogicPosition(position),
             LastLogicPosition(position),
-            RigidBody::Dynamic,
-            Collider::circle(BIGBALL_RADIUS),
-            // 只与敌方碰撞
-            CollisionLayers::new([team.to_layer()], TEAM_LAYERS),
-            LinearVelocity(velocity),
-            Mass(size.min(1000) as f32),
-            Restitution::new(0.9),
-            GravityScale(0.0),
+            KinematicVelocity(velocity),
             Mesh2d(mesh),
             MeshMaterial2d(material),
             Transform::from_translation(position.extend(1.0)),
-            CollisionEventsEnabled,
         ))
         .insert(RenderLayers::layer(1))
         .id();
@@ -606,34 +598,36 @@ fn spawn_bullet(
         RenderLayers::layer(1),
         LogicPosition(position),
         LastLogicPosition(position),
-        RigidBody::Dynamic,
-        // 物理碰撞体用矩形近似即可（旋转会跟随 Transform）
-        Collider::rectangle(BULLET_LENGTH, BULLET_WIDTH),
-        // 只与敌方碰撞
-        CollisionLayers::new([team.to_layer()], team.enemy_layers()),
-        LinearVelocity(velocity),
-        GravityScale(0.0),
-        Mass(1.0),
+        BulletPrevPosition(position),
+        KinematicVelocity(velocity),
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),
     ));
 }
 
-/// 子弹边界反射 + 最低速度保证
-pub fn bullet_move(
+/// 积分子弹（FixedUpdate）：边界反射 + 最低速度保证 + 记录上一位置用于连续碰撞检测
+pub fn bullet_integrate(
     profiler: Res<Profiler>,
-    mut bullets: Query<(&mut Transform, &mut LinearVelocity), With<Bullet>>,
+    time: Res<Time>,
+    mut bullets: Query<(&mut Transform, &mut KinematicVelocity, &mut BulletPrevPosition), With<Bullet>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBulletMove);
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
     let bullet_half = BULLET_BOUND_HALF;
     let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + bullet_half;
     let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - bullet_half;
     let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + bullet_half;
     let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - bullet_half;
 
-    for (mut transform, mut velocity) in bullets.iter_mut() {
+    for (mut transform, mut velocity, mut prev) in bullets.iter_mut() {
         let mut pos = transform.translation.truncate();
+        prev.0 = pos;
+        pos += velocity.0 * dt;
 
         // X 轴
         if pos.x < min_x {
@@ -653,10 +647,51 @@ pub fn bullet_move(
             velocity.0.y = -velocity.0.y.abs();
         }
 
-        // 保证最低速度
         let speed = velocity.0.length();
         if speed < BULLET_MIN_SPEED && speed > 0.0 {
             velocity.0 = velocity.0.normalize() * BULLET_MIN_SPEED;
+        }
+
+        transform.translation.x = pos.x;
+        transform.translation.y = pos.y;
+    }
+}
+
+/// 积分大球（FixedUpdate）：边界反射
+pub fn bigball_integrate(
+    profiler: Res<Profiler>,
+    time: Res<Time>,
+    mut bigballs: Query<(&mut Transform, &mut KinematicVelocity), With<BigBall>>,
+) {
+    let _scope = profiler.scope(ScopeId::TerritoryContainUnits);
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
+    let r = BIGBALL_RADIUS;
+    let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
+    let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
+    let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + r;
+    let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - r;
+
+    for (mut transform, mut velocity) in bigballs.iter_mut() {
+        let mut pos = transform.translation.truncate();
+        pos += velocity.0 * dt;
+
+        if pos.x < min_x {
+            pos.x = min_x;
+            velocity.0.x = velocity.0.x.abs();
+        } else if pos.x > max_x {
+            pos.x = max_x;
+            velocity.0.x = -velocity.0.x.abs();
+        }
+        if pos.y < min_y {
+            pos.y = min_y;
+            velocity.0.y = velocity.0.y.abs();
+        } else if pos.y > max_y {
+            pos.y = max_y;
+            velocity.0.y = -velocity.0.y.abs();
         }
 
         transform.translation.x = pos.x;
@@ -748,113 +783,182 @@ pub fn bullet_hit_terrain(
 }
 
 /// 子弹击中单位
-pub fn bullet_hit_units(
+fn segment_circle_t(a: Vec2, b: Vec2, c: Vec2, r: f32) -> Option<f32> {
+    // Solve |(a + t*(b-a)) - c|^2 = r^2 for t in [0,1]
+    let d = b - a;
+    let f = a - c;
+    let a0 = d.dot(d);
+    if a0 <= 1e-8 {
+        return None;
+    }
+    let b0 = 2.0 * f.dot(d);
+    let c0 = f.dot(f) - r * r;
+    let disc = b0 * b0 - 4.0 * a0 * c0;
+    if disc < 0.0 {
+        return None;
+    }
+    let s = disc.sqrt();
+    let t1 = (-b0 - s) / (2.0 * a0);
+    let t2 = (-b0 + s) / (2.0 * a0);
+    let mut best = None;
+    if (0.0..=1.0).contains(&t1) {
+        best = Some(t1);
+    }
+    if (0.0..=1.0).contains(&t2) {
+        best = match best {
+            None => Some(t2),
+            Some(t) => Some(t.min(t2)),
+        };
+    }
+    best
+}
+
+/// 子弹击中单位（FixedUpdate，自定义连续碰撞检测）
+pub fn bullet_hit_units_manual(
     profiler: Res<Profiler>,
     mut commands: Commands,
-    mut collision_events: MessageReader<CollisionStart>,
-    bullets: Query<(&Bullet, Entity)>,
-    mut bigballs: Query<(&mut BigBall, Entity)>,
-    mut shields: Query<(&mut Shield, Entity)>,
-    hqs: Query<(&HQ, Entity)>,
+    bullets: Query<(Entity, &Bullet, &Transform, &BulletPrevPosition)>,
+    mut bigballs: Query<(Entity, &mut BigBall, &Transform)>,
+    mut shields: Query<(Entity, &mut Shield, &Transform)>,
+    hqs: Query<(Entity, &HQ, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
     mut victory_events: MessageWriter<VictoryEvent>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBulletHitUnits);
-    let profiling = profiler.is_enabled();
-    let mut read_events = 0u64;
-    for event in collision_events.read() {
-        if profiling {
-            read_events += 1;
+
+    for (bullet_entity, bullet, transform, prev) in bullets.iter() {
+        let a = prev.0;
+        let b = transform.translation.truncate();
+        let mut best: Option<(f32, Entity, HitKind)> = None;
+
+        for (entity, hq, t) in hqs.iter() {
+            if hq.team == bullet.team {
+                continue;
+            }
+            let center = t.translation.truncate();
+            if let Some(t_hit) = segment_circle_t(a, b, center, HQ_HALF_SIZE + BULLET_RADIUS) {
+                if best.map_or(true, |(bt, _, _)| t_hit < bt) {
+                    best = Some((t_hit, entity, HitKind::Hq));
+                }
+            }
         }
-        let (bullet_entity, target_entity) = if bullets.contains(event.collider1) {
-            (event.collider1, event.collider2)
-        } else if bullets.contains(event.collider2) {
-            (event.collider2, event.collider1)
-        } else {
+
+        for (entity, shield, t) in shields.iter() {
+            if shield.team == bullet.team {
+                continue;
+            }
+            let center = t.translation.truncate();
+            if let Some(t_hit) = segment_circle_t(a, b, center, shield.radius + BULLET_RADIUS) {
+                if best.map_or(true, |(bt, _, _)| t_hit < bt) {
+                    best = Some((t_hit, entity, HitKind::Shield));
+                }
+            }
+        }
+
+        for (entity, ball, t) in bigballs.iter() {
+            if ball.team == bullet.team {
+                continue;
+            }
+            let center = t.translation.truncate();
+            if let Some(t_hit) = segment_circle_t(a, b, center, BIGBALL_RADIUS + BULLET_RADIUS) {
+                if best.map_or(true, |(bt, _, _)| t_hit < bt) {
+                    best = Some((t_hit, entity, HitKind::BigBall));
+                }
+            }
+        }
+
+        let Some((_t_hit, target, kind)) = best else {
             continue;
         };
 
-        if let Ok((bullet, _)) = bullets.get(bullet_entity) {
-            // 检查HQ
-            if let Ok((hq, _)) = hqs.get(target_entity) {
-                if hq.team != bullet.team {
-                    commands.entity(bullet_entity).despawn();
-                    victory_events.write(VictoryEvent { winner: bullet.team });
-                    continue;
-                }
+        match kind {
+            HitKind::Hq => {
+                commands.entity(bullet_entity).despawn();
+                victory_events.write(VictoryEvent { winner: bullet.team });
             }
-
-            // 检查大球
-            if let Ok((mut ball, ball_entity)) = bigballs.get_mut(target_entity) {
-                if ball.team != bullet.team {
-                    let damage = bullet.value.min(ball.size);
-                    ball.size -= damage;
-                    commands.entity(bullet_entity).despawn();
-
-                    if ball.size == 0 {
-                        commands.entity(ball_entity).despawn();
-                        destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity: ball_entity });
-                    }
-                    continue;
-                }
-            }
-
-            // 检查护盾
-            if let Ok((mut shield, shield_entity)) = shields.get_mut(target_entity) {
-                if shield.team != bullet.team {
+            HitKind::Shield => {
+                if let Ok((_e, mut shield, _t)) = shields.get_mut(target) {
                     let damage = bullet.value.min(shield.durability);
                     shield.durability -= damage;
-                    commands.entity(bullet_entity).despawn();
-
+                }
+                commands.entity(bullet_entity).despawn();
+                if let Ok((_e, shield, _t)) = shields.get(target) {
                     if shield.durability == 0 {
-                        commands.entity(shield_entity).despawn();
-                        destroyed_events.write(UnitDestroyedEvent { team: shield.team, entity: shield_entity });
+                        commands.entity(target).despawn();
+                        destroyed_events.write(UnitDestroyedEvent { team: shield.team, entity: target });
+                    }
+                }
+            }
+            HitKind::BigBall => {
+                if let Ok((_e, mut ball, _t)) = bigballs.get_mut(target) {
+                    let damage = bullet.value.min(ball.size);
+                    ball.size -= damage;
+                }
+                commands.entity(bullet_entity).despawn();
+                if let Ok((_e, ball, _t)) = bigballs.get(target) {
+                    if ball.size == 0 {
+                        commands.entity(target).despawn();
+                        destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity: target });
                     }
                 }
             }
         }
     }
-    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HitKind {
+    Hq,
+    Shield,
+    BigBall,
 }
 
 /// 子弹与子弹碰撞
-pub fn bullet_bullet_collision(
+/// 子弹与子弹碰撞（FixedUpdate，可选；当前实现用粗暴 O(n^2)，仅用于 debug 开关）
+pub fn bullet_bullet_collision_manual(
     profiler: Res<Profiler>,
     mut commands: Commands,
     settings: Res<TerritorySettings>,
-    mut collision_events: MessageReader<CollisionStart>,
-    mut bullets: Query<(&mut Bullet, Entity)>,
+    mut bullets: Query<(Entity, &mut Bullet, &Transform)>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBulletBulletCollision);
     if !settings.enable_bullet_bullet_collision {
         return;
     }
 
-    let profiling = profiler.is_enabled();
-    let mut read_events = 0u64;
-    for event in collision_events.read() {
-        if profiling {
-            read_events += 1;
-        }
-        // 使用 get_many_mut 避免同时借用冲突
-        if let Ok([(mut bullet1, entity1), (mut bullet2, entity2)]) =
-            bullets.get_many_mut([event.collider1, event.collider2]) {
+    let mut list: Vec<(Entity, TeamColor, u64, Vec2)> = Vec::new();
+    for (e, b, t) in bullets.iter() {
+        list.push((e, b.team, b.value, t.translation.truncate()));
+    }
 
-            if bullet1.team != bullet2.team {
-                if bullet1.value > bullet2.value {
-                    bullet1.value -= bullet2.value;
-                    commands.entity(entity2).despawn();
-                } else if bullet2.value > bullet1.value {
-                    bullet2.value -= bullet1.value;
-                    commands.entity(entity1).despawn();
-                } else {
-                    commands.entity(entity1).despawn();
-                    commands.entity(entity2).despawn();
-                }
+    for i in 0..list.len() {
+        for j in (i + 1)..list.len() {
+            let (e1, team1, _, p1) = list[i];
+            let (e2, team2, _, p2) = list[j];
+            if team1 == team2 {
+                continue;
+            }
+            if p1.distance_squared(p2) > (BULLET_RADIUS * 2.0) * (BULLET_RADIUS * 2.0) {
+                continue;
+            }
+            let Ok([(_, mut b1, _), (_, mut b2, _)]) = bullets.get_many_mut([e1, e2]) else {
+                continue;
+            };
+            if b1.team == b2.team {
+                continue;
+            }
+            if b1.value > b2.value {
+                b1.value -= b2.value;
+                commands.entity(e2).despawn();
+            } else if b2.value > b1.value {
+                b2.value -= b1.value;
+                commands.entity(e1).despawn();
+            } else {
+                commands.entity(e1).despawn();
+                commands.entity(e2).despawn();
             }
         }
     }
-    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
 }
 
 /// 大球占领格子 + 同步逻辑坐标
@@ -971,37 +1075,65 @@ fn bresenham_iter(x0: i32, y0: i32, x1: i32, y1: i32) -> BresenhamIter {
 /// 大球碰撞（动量守恒+损失数值）
 pub fn bigball_collision(
     profiler: Res<Profiler>,
-    mut collision_events: MessageReader<CollisionStart>,
-    mut bigballs: Query<(&mut BigBall, &mut LinearVelocity, &Mass)>,
+    mut bigballs: Query<(Entity, &mut BigBall, &mut Transform, &mut KinematicVelocity)>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBigballCollision);
-    let profiling = profiler.is_enabled();
-    let mut read_events = 0u64;
-    for event in collision_events.read() {
-        if profiling {
-            read_events += 1;
-        }
-        // 使用 get_many_mut 避免同时借用冲突
-        if let Ok([(mut ball1, mut vel1, mass1), (mut ball2, mut vel2, mass2)]) =
-            bigballs.get_many_mut([event.collider1, event.collider2]) {
+    let mut ids = Vec::new();
+    for (e, _, _, _) in bigballs.iter() {
+        ids.push(e);
+    }
 
-            if ball1.team != ball2.team {
-                // 简单的弹性碰撞（动量守恒）
-                let v1 = vel1.0;
-                let v2 = vel2.0;
-                let m1 = mass1.0;
-                let m2 = mass2.0;
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            let a = ids[i];
+            let b = ids[j];
+            let Ok([(ea, mut ball1, mut t1, mut v1), (eb, mut ball2, mut t2, mut v2)]) =
+                bigballs.get_many_mut([a, b])
+            else {
+                continue;
+            };
+            let _ = (ea, eb);
 
-                vel1.0 = ((m1 - m2) * v1 + 2.0 * m2 * v2) / (m1 + m2);
-                vel2.0 = ((m2 - m1) * v2 + 2.0 * m1 * v1) / (m1 + m2);
-
-                // 碰撞损失数值
-                ball1.size = ball1.size.saturating_sub(ball2.size / 10);
-                ball2.size = ball2.size.saturating_sub(ball1.size / 10);
+            if ball1.team == ball2.team {
+                continue;
             }
+
+            let p1 = t1.translation.truncate();
+            let p2 = t2.translation.truncate();
+            let delta = p2 - p1;
+            let dist_sq = delta.length_squared();
+            let r = BIGBALL_RADIUS * 2.0;
+            if dist_sq >= r * r || dist_sq <= 1e-8 {
+                continue;
+            }
+
+            let dist = dist_sq.sqrt();
+            let n = delta / dist;
+            let penetration = r - dist;
+            let corr = n * (penetration * 0.5);
+            t1.translation.x -= corr.x;
+            t1.translation.y -= corr.y;
+            t2.translation.x += corr.x;
+            t2.translation.y += corr.y;
+
+            let m1 = (ball1.size.min(1000) as f32).max(1.0);
+            let m2 = (ball2.size.min(1000) as f32).max(1.0);
+            let rel = v1.0 - v2.0;
+            let rel_n = rel.dot(n);
+            if rel_n < 0.0 {
+                let e = 0.9;
+                let j_imp = (-(1.0 + e) * rel_n) / (1.0 / m1 + 1.0 / m2);
+                let impulse = j_imp * n;
+                v1.0 += impulse / m1;
+                v2.0 -= impulse / m2;
+            }
+
+            let loss1 = ball2.size / 10;
+            let loss2 = ball1.size / 10;
+            ball1.size = ball1.size.saturating_sub(loss1);
+            ball2.size = ball2.size.saturating_sub(loss2);
         }
     }
-    profiler.add_counter(CounterId::TerritoryCollisionStartRead, read_events);
 }
 
 /// 清理耗尽的单位
@@ -1077,45 +1209,18 @@ pub fn check_victory(
 /// 限制单位在战场范围内 + 边界弹性反弹
 pub fn contain_units(
     profiler: Res<Profiler>,
-    mut bigballs: Query<(&mut Transform, &mut LogicPosition, &mut LinearVelocity), With<BigBall>>,
+    mut bigballs: Query<(&mut LogicPosition, &Transform), With<BigBall>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryContainUnits);
-    let r = BIGBALL_RADIUS;
-    let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
-    let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
-    let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + r;
-    let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - r;
-
-    for (mut transform, mut logic_pos, mut velocity) in bigballs.iter_mut() {
+    for (mut logic_pos, transform) in bigballs.iter_mut() {
         logic_pos.0 = transform.translation.truncate();
-
-        // X 轴
-        if logic_pos.0.x < min_x {
-            logic_pos.0.x = min_x;
-            velocity.0.x = velocity.0.x.abs();
-        } else if logic_pos.0.x > max_x {
-            logic_pos.0.x = max_x;
-            velocity.0.x = -velocity.0.x.abs();
-        }
-
-        // Y 轴
-        if logic_pos.0.y < min_y {
-            logic_pos.0.y = min_y;
-            velocity.0.y = velocity.0.y.abs();
-        } else if logic_pos.0.y > max_y {
-            logic_pos.0.y = max_y;
-            velocity.0.y = -velocity.0.y.abs();
-        }
-
-        transform.translation.x = logic_pos.0.x;
-        transform.translation.y = logic_pos.0.y;
     }
 }
 
 /// 让子弹朝向与其当前速度方向一致（避免物理改变速度后渲染方向滞后）
 pub fn sync_bullet_rotation_to_velocity(
     profiler: Res<Profiler>,
-    mut bullets: Query<(&LinearVelocity, &mut Transform), With<Bullet>>,
+    mut bullets: Query<(&KinematicVelocity, &mut Transform), With<Bullet>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritorySyncBulletRotationToVelocity);
     for (velocity, mut transform) in bullets.iter_mut() {

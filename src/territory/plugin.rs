@@ -46,21 +46,26 @@ impl Plugin for TerritoryPlugin {
             .init_resource::<TargetSpatialIndex>()
             .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
             .add_systems(
-                Update,
+                FixedUpdate,
                 (
-                    spawn_units_from_events,
                     machine_gun_rotate_fire,
                     update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
-                    bullet_move,
+                    bigball_integrate,
+                    bullet_integrate,
                     bullet_hit_terrain,
-                    bullet_hit_units,
-                    bullet_bullet_collision,
+                    bullet_hit_units_manual,
+                    bullet_bullet_collision_manual,
                     bigball_occupy_territory,
                     bigball_collision,
                     cleanup_depleted_units,
                     check_victory,
-                    contain_units,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    spawn_units_from_events,
                     update_grid_render,
                     update_bigball_value_text,
                 ),

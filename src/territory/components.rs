@@ -1,47 +1,6 @@
-use avian2d::prelude::*;
 use bevy::prelude::*;
 
 use crate::colors::TeamColor;
-
-/// 碰撞层定义
-#[derive(PhysicsLayer, Default, Clone, Copy, Debug)]
-pub enum GameLayer {
-    #[default]
-    Default,
-    RedTeam,
-    BlueTeam,
-    GreenTeam,
-    YellowTeam,
-}
-
-pub const TEAM_LAYERS: [GameLayer; 4] = [
-    GameLayer::RedTeam,
-    GameLayer::BlueTeam,
-    GameLayer::GreenTeam,
-    GameLayer::YellowTeam,
-];
-
-impl TeamColor {
-    /// 获取队伍对应的碰撞层
-    pub fn to_layer(&self) -> GameLayer {
-        match self {
-            TeamColor::Red => GameLayer::RedTeam,
-            TeamColor::Blue => GameLayer::BlueTeam,
-            TeamColor::Green => GameLayer::GreenTeam,
-            TeamColor::Yellow => GameLayer::YellowTeam,
-        }
-    }
-
-    /// 获取敌方队伍的碰撞层（用于碰撞过滤）
-    pub fn enemy_layers(&self) -> [GameLayer; 3] {
-        match self {
-            TeamColor::Red => [GameLayer::BlueTeam, GameLayer::GreenTeam, GameLayer::YellowTeam],
-            TeamColor::Blue => [GameLayer::RedTeam, GameLayer::GreenTeam, GameLayer::YellowTeam],
-            TeamColor::Green => [GameLayer::RedTeam, GameLayer::BlueTeam, GameLayer::YellowTeam],
-            TeamColor::Yellow => [GameLayer::RedTeam, GameLayer::BlueTeam, GameLayer::GreenTeam],
-        }
-    }
-}
 
 /// 大球组件 - 移动占领格子
 #[derive(Component, Debug, Clone)]
@@ -88,6 +47,14 @@ pub struct Bullet {
     pub team: TeamColor,
     pub value: u64, // 子弹数值，默认1
 }
+
+/// Territory 侧使用自定义运动学：速度（逻辑单位/秒）
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct KinematicVelocity(pub Vec2);
+
+/// 子弹上一固定步位置（用于连续碰撞检测，避免穿透）
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BulletPrevPosition(pub Vec2);
 
 /// 领土单位标记（用于查询所有可以被消灭的单位）
 #[derive(Component, Debug, Clone, Copy)]
