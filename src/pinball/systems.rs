@@ -2,6 +2,7 @@ use avian2d::prelude::*;
 use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 use rand::Rng;
+use std::collections::HashMap;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType};
@@ -14,10 +15,28 @@ const STUCK_MOVE_EPS: f32 = 0.8;
 const STUCK_SPEED_EPS: f32 = 5.0;
 const STUCK_LIFT_SPEED: f32 = 420.0;
 
+#[derive(Resource, Default)]
+pub struct CircleMeshCache {
+    by_radius_bits: HashMap<u32, Handle<Mesh>>,
+}
+
+impl CircleMeshCache {
+    fn circle(&mut self, meshes: &mut Assets<Mesh>, radius: f32) -> Handle<Mesh> {
+        let key = radius.to_bits();
+        if let Some(handle) = self.by_radius_bits.get(&key) {
+            return handle.clone();
+        }
+        let handle = meshes.add(Circle::new(radius));
+        self.by_radius_bits.insert(key, handle.clone());
+        handle
+    }
+}
+
 /// 生成初始弹珠
 pub fn spawn_initial_marbles(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut mesh_cache: ResMut<CircleMeshCache>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     spawn_points: Query<(&PinballSpawnPoint, &Transform)>,
     asset_server: Res<AssetServer>,
@@ -26,7 +45,8 @@ pub fn spawn_initial_marbles(
         let material = materials.add(spawn_point.team.to_color());
         spawn_marble(
             &mut commands,
-            &mut meshes,
+            &mut *meshes,
+            &mut mesh_cache,
             material,
             spawn_point.team,
             transform.translation.truncate(),
@@ -37,7 +57,8 @@ pub fn spawn_initial_marbles(
 
 fn spawn_marble(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
+    meshes: &mut Assets<Mesh>,
+    mesh_cache: &mut CircleMeshCache,
     material: Handle<ColorMaterial>,
     team: TeamColor,
     position: Vec2,
@@ -49,7 +70,7 @@ fn spawn_marble(
 
     let marble = Marble::new(team);
     let radius = calculate_radius(marble.value);
-    let mesh = meshes.add(Circle::new(radius));
+    let mesh = mesh_cache.circle(meshes, radius);
 
     let marble_entity = commands.spawn((
         marble.clone(),
@@ -239,10 +260,11 @@ pub fn update_marble_display(
     mut text_query: Query<(&MarbleText, &mut Text2d, &mut Transform), Without<Marble>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut mesh_cache: ResMut<CircleMeshCache>,
 ) {
     for (marble_entity, marble, marble_transform) in marbles.iter() {
         let new_radius = calculate_radius(marble.value);
-        let new_mesh = meshes.add(Circle::new(new_radius));
+        let new_mesh = mesh_cache.circle(&mut *meshes, new_radius);
 
         // 更新小球 mesh
         commands.entity(marble_entity).insert(Mesh2d(new_mesh));

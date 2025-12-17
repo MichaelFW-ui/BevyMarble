@@ -28,7 +28,7 @@ impl Plugin for TerritoryPlugin {
             .insert_resource(TerritorySettings::default())
             .init_resource::<BulletPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
-            .add_systems(Startup, (setup_grid_render, setup_initial_game))
+            .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
             .add_systems(
                 Update,
                 (

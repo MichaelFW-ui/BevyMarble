@@ -7,7 +7,8 @@ pub struct PinballPlugin;
 
 impl Plugin for PinballPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_pinball_layout)
+        app.init_resource::<CircleMeshCache>()
+            .add_systems(Startup, spawn_pinball_layout)
             .add_systems(
                 Startup,
                 spawn_initial_marbles.after(spawn_pinball_layout),

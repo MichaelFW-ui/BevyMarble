@@ -11,6 +11,36 @@ pub enum TeamColor {
 }
 
 impl TeamColor {
+    /// 稳定的队伍索引（用于数组下标）
+    pub fn index(&self) -> usize {
+        match self {
+            TeamColor::Red => 0,
+            TeamColor::Blue => 1,
+            TeamColor::Green => 2,
+            TeamColor::Yellow => 3,
+        }
+    }
+
+    /// 写入网格/缓冲区的 ID（0 表示空）
+    pub fn to_id(&self) -> u32 {
+        match self {
+            TeamColor::Red => 1,
+            TeamColor::Blue => 2,
+            TeamColor::Green => 3,
+            TeamColor::Yellow => 4,
+        }
+    }
+
+    pub fn from_id(id: u32) -> Option<Self> {
+        match id {
+            1 => Some(TeamColor::Red),
+            2 => Some(TeamColor::Blue),
+            3 => Some(TeamColor::Green),
+            4 => Some(TeamColor::Yellow),
+            _ => None,
+        }
+    }
+
     /// 获取队伍对应的显示颜色
     pub fn to_color(&self) -> Color {
         match self {

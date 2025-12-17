@@ -21,6 +21,67 @@ const BULLET_SPEED: f32 = 250.0;
 const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
 
+#[derive(Resource, Clone)]
+pub struct TerritoryRenderAssets {
+    bullet_mesh: Handle<Mesh>,
+    bigball_mesh: Handle<Mesh>,
+    shield_mesh: Handle<Mesh>,
+    machine_gun_mesh: Handle<Mesh>,
+    ciws_mesh: Handle<Mesh>,
+    team_materials: [Handle<ColorMaterial>; 4],
+    shield_materials: [Handle<ColorMaterial>; 4],
+}
+
+impl TerritoryRenderAssets {
+    fn team_material(&self, team: TeamColor) -> Handle<ColorMaterial> {
+        self.team_materials[team.index()].clone()
+    }
+
+    fn shield_material(&self, team: TeamColor) -> Handle<ColorMaterial> {
+        self.shield_materials[team.index()].clone()
+    }
+}
+
+#[derive(Resource, Clone)]
+pub struct TerritoryUiAssets {
+    pub ui_font: Handle<Font>,
+}
+
+pub fn setup_territory_assets(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let teams = TeamColor::all();
+    let team_materials = std::array::from_fn(|i| materials.add(teams[i].to_color()));
+    let shield_materials = std::array::from_fn(|i| {
+        let mut color = teams[i].to_color();
+        color.set_alpha(0.3);
+        materials.add(color)
+    });
+
+    let bullet_mesh = meshes.add(Triangle2d::new(
+        Vec2::new(BULLET_LENGTH / 2.0, 0.0),
+        Vec2::new(-BULLET_LENGTH / 2.0, BULLET_WIDTH / 2.0),
+        Vec2::new(-BULLET_LENGTH / 2.0, -BULLET_WIDTH / 2.0),
+    ));
+
+    commands.insert_resource(TerritoryRenderAssets {
+        bullet_mesh,
+        bigball_mesh: meshes.add(Circle::new(BIGBALL_RADIUS)),
+        shield_mesh: meshes.add(Circle::new(SHIELD_RADIUS)),
+        machine_gun_mesh: meshes.add(Rectangle::new(15.0, 15.0)),
+        ciws_mesh: meshes.add(Circle::new(10.0)),
+        team_materials,
+        shield_materials,
+    });
+
+    commands.insert_resource(TerritoryUiAssets {
+        ui_font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+    });
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct BulletPaintKernel {
     pub offsets: Vec<(i32, i32)>,
@@ -208,13 +269,10 @@ pub fn update_target_spatial_index(
 pub fn spawn_units_from_events(
     mut commands: Commands,
     mut events: MessageReader<ActionEvent>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    render_assets: Res<TerritoryRenderAssets>,
+    ui_assets: Res<TerritoryUiAssets>,
     grid: Res<TerritoryGrid>,
-    asset_server: Res<AssetServer>,
 ) {
-    let ui_font: Handle<Font> = asset_server.load("fonts/FiraSans-Bold.ttf");
-
     for event in events.read() {
         let (start_x, start_y) = event.team.start_corner();
         let corner_logic = grid.grid_to_logic(start_x, start_y);
@@ -230,9 +288,8 @@ pub fn spawn_units_from_events(
             ActionType::BigBall => {
                 spawn_bigball(
                     &mut commands,
-                    &mut meshes,
-                    &mut materials,
-                    &ui_font,
+                    &render_assets,
+                    &ui_assets.ui_font,
                     event.team,
                     event.value,
                     spawn_logic,
@@ -240,15 +297,15 @@ pub fn spawn_units_from_events(
             }
             ActionType::Shield => {
                 // 护盾以HQ为中心
-                spawn_shield(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
+                spawn_shield(&mut commands, &render_assets, event.team, event.value, spawn_logic);
             }
             ActionType::MachineGun => {
                 // 机关枪在HQ中心
-                spawn_machine_gun(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
+                spawn_machine_gun(&mut commands, &render_assets, event.team, event.value, spawn_logic);
             }
             ActionType::CIWS => {
                 // CIWS在HQ中心
-                spawn_ciws(&mut commands, &mut meshes, &mut materials, event.team, event.value, spawn_logic);
+                spawn_ciws(&mut commands, &render_assets, event.team, event.value, spawn_logic);
             }
         }
     }
@@ -256,8 +313,7 @@ pub fn spawn_units_from_events(
 
 fn spawn_bigball(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
+    render_assets: &TerritoryRenderAssets,
     ui_font: &Handle<Font>,
     team: TeamColor,
     size: u64,
@@ -267,8 +323,8 @@ fn spawn_bigball(
     let angle = rng.gen_range(0.0..std::f32::consts::TAU);
     let velocity = Vec2::new(angle.cos(), angle.sin()) * BIGBALL_SPEED;
 
-    let mesh = meshes.add(Circle::new(BIGBALL_RADIUS));
-    let material = materials.add(team.to_color());
+    let mesh = render_assets.bigball_mesh.clone();
+    let material = render_assets.team_material(team);
 
     let ball_entity = commands
         .spawn((
@@ -310,16 +366,13 @@ fn spawn_bigball(
 
 fn spawn_shield(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
+    render_assets: &TerritoryRenderAssets,
     team: TeamColor,
     durability: u64,
     position: Vec2,
 ) {
-    let mesh = meshes.add(Circle::new(SHIELD_RADIUS));
-    let mut color = team.to_color();
-    color.set_alpha(0.3);
-    let material = materials.add(color);
+    let mesh = render_assets.shield_mesh.clone();
+    let material = render_assets.shield_material(team);
 
     commands.spawn((
         Shield { team, durability, radius: SHIELD_RADIUS },
@@ -334,14 +387,13 @@ fn spawn_shield(
 
 fn spawn_machine_gun(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
+    render_assets: &TerritoryRenderAssets,
     team: TeamColor,
     bullets: u64,
     position: Vec2,
 ) {
-    let mesh = meshes.add(Rectangle::new(15.0, 15.0));
-    let material = materials.add(team.to_color());
+    let mesh = render_assets.machine_gun_mesh.clone();
+    let material = render_assets.team_material(team);
 
     commands.spawn((
         MachineGun {
@@ -361,14 +413,13 @@ fn spawn_machine_gun(
 
 fn spawn_ciws(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
+    render_assets: &TerritoryRenderAssets,
     team: TeamColor,
     bullets: u64,
     position: Vec2,
 ) {
-    let mesh = meshes.add(Circle::new(10.0));
-    let material = materials.add(team.to_color());
+    let mesh = render_assets.ciws_mesh.clone();
+    let material = render_assets.team_material(team);
 
     commands.spawn((
         CIWS {
@@ -392,8 +443,7 @@ pub fn machine_gun_rotate_fire(
     mut commands: Commands,
     time: Res<Time>,
     mut machine_guns: Query<(&mut MachineGun, &Transform)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    render_assets: Res<TerritoryRenderAssets>,
 ) {
     let delta = time.delta_secs();
 
@@ -422,8 +472,7 @@ pub fn machine_gun_rotate_fire(
             let extra = if remainder > 0 { remainder -= 1; 1 } else { 0 };
             spawn_bullet(
                 &mut commands,
-                &mut meshes,
-                &mut materials,
+                &render_assets,
                 gun.team,
                 value_per_bullet + extra,
                 gun_transform.translation.truncate(),
@@ -442,8 +491,7 @@ pub fn ciws_target_fire(
     time: Res<Time>,
     mut ciws_query: Query<(&mut CIWS, &Transform)>,
     target_index: Res<TargetSpatialIndex>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    render_assets: Res<TerritoryRenderAssets>,
 ) {
     for (mut ciws, ciws_transform) in ciws_query.iter_mut() {
         ciws.fire_timer.tick(time.delta());
@@ -458,15 +506,14 @@ pub fn ciws_target_fire(
             let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
             ciws.bullets -= bullets_to_consume;
             let direction = (target_pos - ciws_pos).normalize();
-            spawn_bullet(&mut commands, &mut meshes, &mut materials, ciws.team, bullets_to_consume, ciws_pos, direction);
+            spawn_bullet(&mut commands, &render_assets, ciws.team, bullets_to_consume, ciws_pos, direction);
         }
     }
 }
 
 fn spawn_bullet(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
+    render_assets: &TerritoryRenderAssets,
     team: TeamColor,
     value: u64,
     position: Vec2,
@@ -475,16 +522,8 @@ fn spawn_bullet(
     let velocity = direction * BULLET_SPEED;
     let angle = direction.y.atan2(direction.x);
 
-    // 子弹渲染为三角形（尖角朝向运动方向），本地坐标系中尖角朝 +X。
-    let half_length = BULLET_LENGTH / 2.0;
-    let half_width = BULLET_WIDTH / 2.0;
-    let mesh = meshes.add(Triangle2d::new(
-        Vec2::new(half_length, 0.0),
-        Vec2::new(-half_length, half_width),
-        Vec2::new(-half_length, -half_width),
-    ));
-
-    let material = materials.add(team.to_color());
+    let mesh = render_assets.bullet_mesh.clone();
+    let material = render_assets.team_material(team);
 
     commands.spawn((
         Bullet { team, value },
@@ -563,10 +602,8 @@ pub fn bullet_hit_terrain(
         }
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_pos.0), grid.logic_to_grid(current_logic)) {
-            // 跳过起点，只染路径上的新格子
-            let points = bresenham_line(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
-
-            for (x, y) in points.into_iter().skip(1) {
+            // 跳过起点，只染路径上的新格子（避免分配 Vec）
+            for (x, y) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32).skip(1) {
                 if bullet.value == 0 {
                     break;
                 }
@@ -717,9 +754,7 @@ pub fn bigball_occupy_territory(
         let current_pos = logic_pos.0;
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
-            let points = bresenham_line(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
-
-            for (cx, cy) in points {
+            for (cx, cy) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32) {
                 // 对于路径上的每个点，占领以它为中心的圆形区域
                 for dy in -ball_grid_radius..=ball_grid_radius {
                     for dx in -ball_grid_radius..=ball_grid_radius {
@@ -745,24 +780,65 @@ pub fn bigball_occupy_territory(
     }
 }
 
-fn bresenham_line(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
-    let mut points = Vec::new();
+#[derive(Clone)]
+struct BresenhamIter {
+    x: i32,
+    y: i32,
+    x1: i32,
+    y1: i32,
+    dx: i32,
+    dy: i32,
+    sx: i32,
+    sy: i32,
+    err: i32,
+    done: bool,
+}
+
+impl Iterator for BresenhamIter {
+    type Item = (i32, i32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let point = (self.x, self.y);
+        if self.x == self.x1 && self.y == self.y1 {
+            self.done = true;
+            return Some(point);
+        }
+
+        let e2 = 2 * self.err;
+        if e2 > -self.dy {
+            self.err -= self.dy;
+            self.x += self.sx;
+        }
+        if e2 < self.dx {
+            self.err += self.dx;
+            self.y += self.sy;
+        }
+
+        Some(point)
+    }
+}
+
+fn bresenham_iter(x0: i32, y0: i32, x1: i32, y1: i32) -> BresenhamIter {
     let dx = (x1 - x0).abs();
     let dy = (y1 - y0).abs();
     let sx = if x0 < x1 { 1 } else { -1 };
     let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx - dy;
-    let mut x = x0;
-    let mut y = y0;
-
-    loop {
-        points.push((x, y));
-        if x == x1 && y == y1 { break; }
-        let e2 = 2 * err;
-        if e2 > -dy { err -= dy; x += sx; }
-        if e2 < dx { err += dx; y += sy; }
+    BresenhamIter {
+        x: x0,
+        y: y0,
+        x1,
+        y1,
+        dx,
+        dy,
+        sx,
+        sy,
+        err: dx - dy,
+        done: false,
     }
-    points
 }
 
 /// 大球碰撞（动量守恒+损失数值）

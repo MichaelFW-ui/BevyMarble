@@ -5,7 +5,6 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::camera::visibility::RenderLayers;
 
-use crate::colors::TeamColor;
 use super::grid::TerritoryGrid;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 
@@ -44,16 +43,7 @@ pub struct GridBufferHandle(pub Handle<ShaderStorageBuffer>);
 
 /// 将 TerritoryGrid 转换为 GPU buffer 数据
 fn grid_to_buffer_data(grid: &TerritoryGrid) -> Vec<u32> {
-    grid.cells()
-        .iter()
-        .map(|cell| match cell {
-            Some(TeamColor::Red) => 1u32,
-            Some(TeamColor::Blue) => 2u32,
-            Some(TeamColor::Green) => 3u32,
-            Some(TeamColor::Yellow) => 4u32,
-            None => 0u32,
-        })
-        .collect()
+    grid.cells().to_vec()
 }
 
 /// 初始化网格渲染
@@ -109,8 +99,12 @@ pub fn update_grid_render(
     // 创建新的 buffer 数据
     let buffer_data = grid_to_buffer_data(&grid);
 
-    // 直接替换 buffer asset
-    buffers.insert(&buffer_handle.0, ShaderStorageBuffer::from(buffer_data));
+    // 更新 buffer asset（避免替换 handle/触发额外资产管理开销）
+    if let Some(storage) = buffers.get_mut(&buffer_handle.0) {
+        storage.set_data(buffer_data);
+    } else {
+        let _ = buffers.insert(&buffer_handle.0, ShaderStorageBuffer::from(buffer_data));
+    }
 
     // 触发材质更新
     if let Some(material) = materials.get_mut(&material_handle.0) {
