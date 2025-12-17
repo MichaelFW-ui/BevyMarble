@@ -8,4 +8,5 @@ mod systems;
 
 pub use plugin::TerritoryPlugin;
 pub use plugin::TerritorySettings;
+pub use plugin::CiwsDistanceMetric;
 pub use coords::TERRITORY_LOGIC_WIDTH;

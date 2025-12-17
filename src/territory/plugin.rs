@@ -9,12 +9,27 @@ use super::systems::*;
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct TerritorySettings {
     pub enable_bullet_bullet_collision: bool,
+    pub enable_ciws: bool,
+    /// CIWS 是否把敌方 `Bullet` 也当作目标（会显著增加索引与查询开销）
+    pub ciws_target_bullets: bool,
+    pub ciws_distance_metric: CiwsDistanceMetric,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiwsDistanceMetric {
+    /// L1 距离：`|dx| + |dy|`（更便宜，但方向有偏好）
+    Manhattan,
+    /// L2 距离的平方：`dx*dx + dy*dy`（更接近“真正最近”）
+    EuclideanSquared,
 }
 
 impl Default for TerritorySettings {
     fn default() -> Self {
         Self {
             enable_bullet_bullet_collision: false,
+            enable_ciws: true,
+            ciws_target_bullets: false,
+            ciws_distance_metric: CiwsDistanceMetric::Manhattan,
         }
     }
 }
@@ -35,8 +50,8 @@ impl Plugin for TerritoryPlugin {
                 (
                     spawn_units_from_events,
                     machine_gun_rotate_fire,
-                    update_target_spatial_index,
-                    ciws_target_fire,
+                    update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
+                    ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     bullet_move,
                     bullet_hit_terrain,
                     bullet_hit_units,

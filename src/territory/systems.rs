@@ -6,7 +6,7 @@ use rand::Rng;
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
 use crate::pinball::format_value;
-use crate::territory::TerritorySettings;
+use crate::territory::{CiwsDistanceMetric, TerritorySettings};
 use super::components::*;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use super::grid::{ShieldInfo, TerritoryGrid};
@@ -194,10 +194,10 @@ impl TargetSpatialIndex {
         (left, bottom, left + self.cell_size, bottom + self.cell_size)
     }
 
-    fn nearest_enemy_pos(&self, origin: Vec2, team: TeamColor) -> Option<Vec2> {
+    fn nearest_enemy_pos(&self, origin: Vec2, team: TeamColor, metric: CiwsDistanceMetric) -> Option<Vec2> {
         let (cx, cy) = self.cell_of(origin)?;
 
-        let mut best: Option<(u64, f32, Vec2)> = None; // (entity_bits, dist2, pos)
+        let mut best: Option<(u64, f32, Vec2)> = None; // (entity_bits, score, pos)
         let mut r = 0;
         let max_r = self.grid_w.max(self.grid_h);
         let eps = 1e-6_f32;
@@ -214,13 +214,18 @@ impl TargetSpatialIndex {
                     if entry.team == team {
                         continue;
                     }
-                    let d2 = origin.distance_squared(entry.pos);
                     let bits = entry.entity.to_bits();
+                    let score = match metric {
+                        CiwsDistanceMetric::Manhattan => {
+                            (origin.x - entry.pos.x).abs() + (origin.y - entry.pos.y).abs()
+                        }
+                        CiwsDistanceMetric::EuclideanSquared => origin.distance_squared(entry.pos),
+                    };
                     match best {
-                        None => *best = Some((bits, d2, entry.pos)),
-                        Some((best_bits, best_d2, _)) => {
-                            if d2 + eps < *best_d2 || ((d2 - *best_d2).abs() <= eps && bits < *best_bits) {
-                                *best = Some((bits, d2, entry.pos));
+                        None => *best = Some((bits, score, entry.pos)),
+                        Some((best_bits, best_score, _)) => {
+                            if score + eps < *best_score || ((score - *best_score).abs() <= eps && bits < *best_bits) {
+                                *best = Some((bits, score, entry.pos));
                             }
                         }
                     }
@@ -244,7 +249,7 @@ impl TargetSpatialIndex {
                 }
             }
 
-            if let Some((_, best_d2, _)) = best {
+            if let Some((_, best_score, _)) = best {
                 // 计算“离开当前已搜索正方形”的最小距离，作为外层环的下界
                 let (left, bottom, right, top) = {
                     let (l0, b0, _, _) = self.cell_aabb(min_x, min_y);
@@ -258,8 +263,17 @@ impl TargetSpatialIndex {
                     let to_bottom = origin.y - bottom;
                     let to_top = top - origin.y;
                     let boundary = to_left.min(to_right).min(to_bottom.min(to_top));
-                    if boundary * boundary > best_d2 {
-                        break;
+                    match metric {
+                        CiwsDistanceMetric::Manhattan => {
+                            if boundary > best_score {
+                                break;
+                            }
+                        }
+                        CiwsDistanceMetric::EuclideanSquared => {
+                            if boundary * boundary > best_score {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -274,10 +288,28 @@ impl TargetSpatialIndex {
 /// 为 CIWS 构建目标的空间索引（稳定 tie-break：同距离时选 Entity bits 更小的）
 pub fn update_target_spatial_index(
     mut index: ResMut<TargetSpatialIndex>,
-    targets: Query<(Entity, &TerritoryUnit, &Transform), Or<(With<BigBall>, With<Bullet>)>>,
+    settings: Res<TerritorySettings>,
+    bigballs: Query<(Entity, &TerritoryUnit, &Transform), With<BigBall>>,
+    bullets: Query<(Entity, &TerritoryUnit, &Transform), With<Bullet>>,
 ) {
     index.clear();
-    for (entity, unit, transform) in targets.iter() {
+    for (entity, unit, transform) in bigballs.iter() {
+        let pos = transform.translation.truncate();
+        if let Some((x, y)) = index.cell_of(pos) {
+            let idx = index.bucket_index(x, y);
+            index.buckets[idx].push(TargetEntry {
+                entity,
+                team: unit.team,
+                pos,
+            });
+        }
+    }
+
+    if !settings.ciws_target_bullets {
+        return;
+    }
+
+    for (entity, unit, transform) in bullets.iter() {
         let pos = transform.translation.truncate();
         if let Some((x, y)) = index.cell_of(pos) {
             let idx = index.bucket_index(x, y);
@@ -297,6 +329,7 @@ pub fn spawn_units_from_events(
     render_assets: Res<TerritoryRenderAssets>,
     ui_assets: Res<TerritoryUiAssets>,
     grid: Res<TerritoryGrid>,
+    settings: Res<TerritorySettings>,
 ) {
     for event in events.read() {
         let (start_x, start_y) = event.team.start_corner();
@@ -330,7 +363,9 @@ pub fn spawn_units_from_events(
             }
             ActionType::CIWS => {
                 // CIWS在HQ中心
-                spawn_ciws(&mut commands, &render_assets, event.team, event.value, spawn_logic);
+                if settings.enable_ciws {
+                    spawn_ciws(&mut commands, &render_assets, event.team, event.value, spawn_logic);
+                }
             }
         }
     }
@@ -517,6 +552,7 @@ pub fn ciws_target_fire(
     mut ciws_query: Query<(&mut CIWS, &Transform)>,
     target_index: Res<TargetSpatialIndex>,
     render_assets: Res<TerritoryRenderAssets>,
+    settings: Res<TerritorySettings>,
 ) {
     for (mut ciws, ciws_transform) in ciws_query.iter_mut() {
         ciws.fire_timer.tick(time.delta());
@@ -526,7 +562,7 @@ pub fn ciws_target_fire(
         }
 
         let ciws_pos = ciws_transform.translation.truncate();
-        if let Some(target_pos) = target_index.nearest_enemy_pos(ciws_pos, ciws.team) {
+        if let Some(target_pos) = target_index.nearest_enemy_pos(ciws_pos, ciws.team, settings.ciws_distance_metric) {
             // 合并子弹：消耗最多 BULLET_MERGE_RATIO 颗，发射 1 颗高 value 子弹
             let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
             ciws.bullets -= bullets_to_consume;

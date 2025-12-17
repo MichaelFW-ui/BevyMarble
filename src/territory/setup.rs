@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 
 use crate::colors::TeamColor;
+use crate::territory::TerritorySettings;
 use super::grid::TerritoryGrid;
 
 /// 开局初始化系统
@@ -10,6 +11,7 @@ pub fn setup_initial_game(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     grid: Res<TerritoryGrid>,
+    settings: Res<TerritorySettings>,
 ) {
     // 每个队伍开局分配等量的机关枪和近防炮
     for team in TeamColor::all() {
@@ -31,7 +33,9 @@ pub fn setup_initial_game(
         spawn_initial_machine_gun(&mut commands, &mut meshes, &mut materials, team, base_logic);
 
         // 初始近防炮 - 1个，在HQ中心
-        spawn_initial_ciws(&mut commands, &mut meshes, &mut materials, team, base_logic);
+        if settings.enable_ciws {
+            spawn_initial_ciws(&mut commands, &mut meshes, &mut materials, team, base_logic);
+        }
     }
 }
 
