@@ -104,10 +104,11 @@ pub enum CounterId {
     TerritoryGridCellsOccupied = 4,
     TerritoryBulletPathPoints = 5,
     TerritoryBulletKernelPointsEst = 6,
+    TerritoryDirtyTilesUpdated = 7,
 }
 
 impl CounterId {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -118,6 +119,7 @@ impl CounterId {
             CounterId::TerritoryGridCellsOccupied => "territory/grid/cells_occupied",
             CounterId::TerritoryBulletPathPoints => "territory/bullet/path_points",
             CounterId::TerritoryBulletKernelPointsEst => "territory/bullet/kernel_points_est",
+            CounterId::TerritoryDirtyTilesUpdated => "territory/grid/dirty_tiles_updated",
         }
     }
 }
@@ -130,6 +132,7 @@ const ALL_COUNTERS: [CounterId; CounterId::COUNT] = [
     CounterId::TerritoryGridCellsOccupied,
     CounterId::TerritoryBulletPathPoints,
     CounterId::TerritoryBulletKernelPointsEst,
+    CounterId::TerritoryDirtyTilesUpdated,
 ];
 
 #[derive(Resource)]

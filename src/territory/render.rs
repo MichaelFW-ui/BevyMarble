@@ -6,8 +6,8 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::camera::visibility::RenderLayers;
 
-use crate::profiler::{Profiler, ScopeId};
-use super::grid::TerritoryGrid;
+use crate::profiler::{CounterId, Profiler, ScopeId};
+use super::grid::{TerritoryGrid, TILE_SIZE, TOTAL_TILES};
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 
 /// 网格渲染组件
@@ -83,17 +83,22 @@ pub fn setup_grid_render(
     ));
 }
 
-/// 更新网格渲染 - 替换整个 buffer
+/// 脏 tile 阈值：超过此比例则使用全量更新
+const DIRTY_THRESHOLD_PERCENT: u32 = 25;
+
+/// 更新网格渲染 - 支持 tile 级别增量更新
 pub fn update_grid_render(
     profiler: Res<Profiler>,
-    grid: Res<TerritoryGrid>,
+    mut grid: ResMut<TerritoryGrid>,
     image_handle: Res<GridImageHandle>,
     mut images: ResMut<Assets<Image>>,
     material_handle: Res<GridMaterialHandle>,
     mut materials: ResMut<Assets<GridMaterial>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateGridRender);
-    if !grid.is_changed() {
+    
+    // 使用显式脏标记，避免 ResMut 借用导致的假阳性
+    if !grid.is_dirty() {
         return;
     }
 
@@ -104,12 +109,47 @@ pub fn update_grid_render(
         return;
     };
 
+    let dirty_count = grid.get_dirty_count();
     let cells = grid.cells();
-    if data.len() == cells.len() {
-        data.copy_from_slice(cells);
+    let width = grid.width as usize;
+    
+    // 判断是使用 tile 级别更新还是全量更新
+    let dirty_threshold = (TOTAL_TILES as u32 * DIRTY_THRESHOLD_PERCENT) / 100;
+    
+    if dirty_count <= dirty_threshold {
+        // Tile 级别增量更新
+        let profiling = profiler.is_enabled();
+        let mut tiles_updated = 0u64;
+        
+        for (tile_x, tile_y) in grid.iter_dirty_tiles() {
+            let (x_start, y_start, _x_end, y_end) = TerritoryGrid::tile_cell_range(tile_x, tile_y);
+            
+            // 复制该 tile 的每一行
+            for y in y_start..y_end {
+                let row_start = y as usize * width + x_start as usize;
+                let row_end = row_start + TILE_SIZE as usize;
+                data[row_start..row_end].copy_from_slice(&cells[row_start..row_end]);
+            }
+            
+            if profiling {
+                tiles_updated += 1;
+            }
+        }
+        
+        profiler.add_counter(CounterId::TerritoryDirtyTilesUpdated, tiles_updated);
     } else {
-        *data = cells.to_vec();
+        // 全量更新（脏 tile 过多）
+        if data.len() == cells.len() {
+            data.copy_from_slice(cells);
+        } else {
+            *data = cells.to_vec();
+        }
+        
+        profiler.add_counter(CounterId::TerritoryDirtyTilesUpdated, TOTAL_TILES as u64);
     }
+    
+    // 清空脏标记
+    grid.clear_dirty();
 
     // 关键：Image 被修改后，渲染端会重建 `GpuImage`（新的 texture/view）。
     // 但材质的 bind group 不会因为 Image 变化自动重建，所以需要触碰材质触发重新 prepare。

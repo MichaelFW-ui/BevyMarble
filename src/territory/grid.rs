@@ -3,6 +3,12 @@ use bevy::prelude::*;
 use crate::colors::TeamColor;
 use super::coords::{grid_to_logic, logic_to_grid};
 
+/// Dirty tile tracking constants
+pub const TILE_SIZE: u32 = 32;
+pub const TILES_PER_ROW: u32 = 32; // 1024 / 32
+pub const TOTAL_TILES: usize = 1024; // 32 * 32
+const DIRTY_WORDS: usize = 16; // 1024 / 64
+
 #[derive(Debug, Clone, Copy)]
 pub struct ShieldInfo {
     pub pos: Vec2,
@@ -20,6 +26,9 @@ pub struct TerritoryGrid {
     row_words: usize,
     // 每队一份位图（按“行”对齐，方便按区间检查）
     team_row_bits: [Vec<u64>; 4],
+    // 脏 tile 位图：1024 个 tile，用 16 个 u64 表示
+    dirty_tiles: [u64; DIRTY_WORDS],
+    dirty_count: u32,
 }
 
 impl TerritoryGrid {
@@ -38,6 +47,8 @@ impl TerritoryGrid {
                 empty_bits.clone(),
                 empty_bits,
             ],
+            dirty_tiles: [u64::MAX; DIRTY_WORDS], // 初始全脏，确保首帧全量更新
+            dirty_count: TOTAL_TILES as u32,
         };
 
         // 初始化四个角落（与 TeamColor::start_corner 一致）
@@ -89,6 +100,25 @@ impl TerritoryGrid {
         }
 
         self.cells[idx] = new_id;
+        
+        // 标记所属 tile 为脏
+        self.mark_tile_dirty(x, y);
+    }
+    
+    /// 标记指定格子所属的 tile 为脏
+    #[inline]
+    fn mark_tile_dirty(&mut self, x: u32, y: u32) {
+        let tile_x = x / TILE_SIZE;
+        let tile_y = y / TILE_SIZE;
+        let tile_idx = (tile_y * TILES_PER_ROW + tile_x) as usize;
+        let word_idx = tile_idx / 64;
+        let bit_mask = 1u64 << (tile_idx % 64);
+        
+        // 只有当这个 tile 之前未被标记时才增加计数
+        if self.dirty_tiles[word_idx] & bit_mask == 0 {
+            self.dirty_tiles[word_idx] |= bit_mask;
+            self.dirty_count += 1;
+        }
     }
 
     #[inline]
@@ -262,5 +292,52 @@ impl TerritoryGrid {
     /// 获取原始网格数据（用于渲染）
     pub fn cells(&self) -> &[u8] {
         &self.cells
+    }
+    
+    // ==================== 脏 Tile 追踪 API ====================
+    
+    /// 是否有脏 tile 需要更新
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty_count > 0
+    }
+    
+    /// 获取脏 tile 数量
+    #[inline]
+    pub fn get_dirty_count(&self) -> u32 {
+        self.dirty_count
+    }
+    
+    /// 遍历所有脏 tile 的 (tile_x, tile_y) 坐标
+    pub fn iter_dirty_tiles(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.dirty_tiles.iter().enumerate().flat_map(|(word_idx, &word)| {
+            let mut w = word;
+            let mut results = Vec::new();
+            while w != 0 {
+                let bit = w.trailing_zeros() as usize;
+                w &= w - 1; // 清除最低位的 1
+                let tile_idx = word_idx * 64 + bit;
+                let tile_x = (tile_idx % TILES_PER_ROW as usize) as u32;
+                let tile_y = (tile_idx / TILES_PER_ROW as usize) as u32;
+                results.push((tile_x, tile_y));
+            }
+            results
+        })
+    }
+    
+    /// 清空所有脏标记
+    pub fn clear_dirty(&mut self) {
+        self.dirty_tiles = [0u64; DIRTY_WORDS];
+        self.dirty_count = 0;
+    }
+    
+    /// 获取指定 tile 对应的格子范围 (x_start, y_start, x_end_exclusive, y_end_exclusive)
+    #[inline]
+    pub fn tile_cell_range(tile_x: u32, tile_y: u32) -> (u32, u32, u32, u32) {
+        let x_start = tile_x * TILE_SIZE;
+        let y_start = tile_y * TILE_SIZE;
+        let x_end = x_start + TILE_SIZE;
+        let y_end = y_start + TILE_SIZE;
+        (x_start, y_start, x_end, y_end)
     }
 }
