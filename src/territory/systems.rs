@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
+use bevy::time::Virtual;
 use rand::Rng;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
 use crate::pinball::format_value;
 use crate::profiler::{CounterId, Profiler, ScopeId};
-use crate::territory::{CiwsDistanceMetric, TerritorySettings};
+use crate::territory::{CiwsDistanceMetric, GameOver, TerritorySettings};
 use super::components::*;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use super::grid::{ShieldInfo, TerritoryGrid};
@@ -822,7 +823,6 @@ pub fn bullet_hit_units_manual(
     mut shields: Query<(Entity, &mut Shield, &Transform)>,
     hqs: Query<(Entity, &HQ, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
-    mut victory_events: MessageWriter<VictoryEvent>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBulletHitUnits);
 
@@ -873,8 +873,13 @@ pub fn bullet_hit_units_manual(
 
         match kind {
             HitKind::Hq => {
+                // HQ 被击中即摧毁（无耐久），发送销毁事件
+                // 胜利由 check_victory 系统判断（当只剩一队时）
+                if let Ok((_, hq, _)) = hqs.get(target) {
+                    destroyed_events.write(UnitDestroyedEvent { team: hq.team, entity: target });
+                }
+                commands.entity(target).despawn();
                 commands.entity(bullet_entity).despawn();
-                victory_events.write(VictoryEvent { winner: bullet.team });
             }
             HitKind::Shield => {
                 if let Ok((_e, mut shield, _t)) = shields.get_mut(target) {
@@ -1136,6 +1141,38 @@ pub fn bigball_collision(
     }
 }
 
+/// 大球撞击 HQ - 摧毁敌方 HQ
+pub fn bigball_hit_hq(
+    profiler: Res<Profiler>,
+    mut commands: Commands,
+    bigballs: Query<(&BigBall, &Transform)>,
+    hqs: Query<(Entity, &HQ, &Transform)>,
+    mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
+) {
+    let _scope = profiler.scope(ScopeId::TerritoryBigballCollision); // 复用同一 scope
+    
+    for (ball, ball_transform) in bigballs.iter() {
+        let ball_pos = ball_transform.translation.truncate();
+        
+        for (hq_entity, hq, hq_transform) in hqs.iter() {
+            // 跳过己方 HQ
+            if hq.team == ball.team {
+                continue;
+            }
+            
+            let hq_pos = hq_transform.translation.truncate();
+            let dist_sq = ball_pos.distance_squared(hq_pos);
+            let collision_dist = BIGBALL_RADIUS + HQ_HALF_SIZE;
+            
+            if dist_sq <= collision_dist * collision_dist {
+                // 大球撞击敌方 HQ，摧毁 HQ
+                destroyed_events.write(UnitDestroyedEvent { team: hq.team, entity: hq_entity });
+                commands.entity(hq_entity).despawn();
+            }
+        }
+    }
+}
+
 /// 清理耗尽的单位
 pub fn cleanup_depleted_units(
     profiler: Res<Profiler>,
@@ -1168,13 +1205,20 @@ pub fn cleanup_depleted_units(
     }
 }
 
-/// 检测胜利
+/// 检测胜利 - 当只剩一支队伍有单位时，该队获胜
 pub fn check_victory(
     profiler: Res<Profiler>,
     units: Query<&TerritoryUnit>,
+    mut game_over: ResMut<GameOver>,
     mut victory_events: MessageWriter<VictoryEvent>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryCheckVictory);
+    
+    // 如果游戏已结束，不再检测
+    if game_over.winner.is_some() {
+        return;
+    }
+    
     let mut team_counts = [0u32; 4];
 
     for unit in units.iter() {
@@ -1201,6 +1245,7 @@ pub fn check_victory(
 
     if alive_count == 1 {
         if let Some(winner) = last_alive {
+            game_over.winner = Some(winner);
             victory_events.write(VictoryEvent { winner });
         }
     }
@@ -1248,5 +1293,26 @@ pub fn update_bigball_value_text(
                 text.0 = value.clone();
             }
         }
+    }
+}
+
+/// 处理胜利事件 - 暂停游戏并显示获胜信息
+pub fn handle_victory_event(
+    mut events: MessageReader<VictoryEvent>,
+    mut time: ResMut<Time<Virtual>>,
+) {
+    for event in events.read() {
+        info!("🎉 Victory! Team {:?} wins!", event.winner);
+        // 暂停虚拟时间，停止游戏逻辑
+        time.pause();
+    }
+}
+
+/// 处理单位被消灭事件 - 记录日志
+pub fn handle_unit_destroyed_event(
+    mut events: MessageReader<UnitDestroyedEvent>,
+) {
+    for event in events.read() {
+        info!("💥 Unit destroyed: Team {:?}, Entity {:?}", event.team, event.entity);
     }
 }

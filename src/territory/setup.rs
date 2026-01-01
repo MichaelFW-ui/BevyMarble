@@ -46,7 +46,7 @@ fn spawn_hq(
     team: TeamColor,
     position: Vec2,
 ) {
-    use super::components::HQ;
+    use super::components::{HQ, TerritoryUnit};
 
     let mesh = meshes.add(Rectangle::new(30.0, 30.0));
     let mut color = team.to_color();
@@ -55,6 +55,7 @@ fn spawn_hq(
 
     commands.spawn((
         HQ { team },
+        TerritoryUnit { team }, // 添加 TerritoryUnit 以便被胜利检测查询到
         RenderLayers::layer(1),
         Mesh2d(mesh),
         MeshMaterial2d(material),
