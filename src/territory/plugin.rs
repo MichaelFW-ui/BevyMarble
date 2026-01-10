@@ -51,10 +51,13 @@ impl Plugin for TerritoryPlugin {
             .init_resource::<BulletPaintKernel>()
             .init_resource::<BigBallPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
+            .init_resource::<CollisionSpatialIndex>()
             .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
             .add_systems(
                 FixedUpdate,
                 (
+                    // 首先更新碰撞空间索引
+                    update_collision_spatial_index,
                     machine_gun_rotate_fire,
                     update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
