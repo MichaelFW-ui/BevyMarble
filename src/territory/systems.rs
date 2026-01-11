@@ -293,6 +293,8 @@ pub struct TargetSpatialIndex {
     min_x: f32,
     min_y: f32,
     buckets: Vec<Vec<TargetEntry>>,
+    /// 记录非空桶索引，优化 clear
+    active_buckets: Vec<usize>,
 }
 
 impl Default for TargetSpatialIndex {
@@ -310,14 +312,28 @@ impl Default for TargetSpatialIndex {
             min_x,
             min_y,
             buckets: vec![Vec::new(); bucket_count],
+            active_buckets: Vec::with_capacity(bucket_count / 4),
         }
     }
 }
 
 impl TargetSpatialIndex {
-    fn clear(&mut self) {
-        for bucket in &mut self.buckets {
-            bucket.clear();
+    /// 只清理活跃桶，避免遍历所有桶
+    fn clear_active(&mut self) {
+        for &idx in &self.active_buckets {
+            self.buckets[idx].clear();
+        }
+        self.active_buckets.clear();
+    }
+
+    /// 插入实体并追踪活跃桶
+    fn insert(&mut self, entity: Entity, team: TeamColor, pos: Vec2) {
+        if let Some((x, y)) = self.cell_of(pos) {
+            let idx = self.bucket_index(x, y);
+            if self.buckets[idx].is_empty() {
+                self.active_buckets.push(idx);
+            }
+            self.buckets[idx].push(TargetEntry { entity, team, pos });
         }
     }
 
@@ -440,17 +456,11 @@ pub fn update_target_spatial_index(
     bullets: Query<(Entity, &Bullet, &Transform), With<Bullet>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex);
-    index.clear();
+    index.clear_active();
+
     for (entity, unit, transform) in bigballs.iter() {
         let pos = transform.translation.truncate();
-        if let Some((x, y)) = index.cell_of(pos) {
-            let idx = index.bucket_index(x, y);
-            index.buckets[idx].push(TargetEntry {
-                entity,
-                team: unit.team,
-                pos,
-            });
-        }
+        index.insert(entity, unit.team, pos);
     }
 
     if !settings.ciws_target_bullets {
@@ -459,14 +469,7 @@ pub fn update_target_spatial_index(
 
     for (entity, bullet, transform) in bullets.iter() {
         let pos = transform.translation.truncate();
-        if let Some((x, y)) = index.cell_of(pos) {
-            let idx = index.bucket_index(x, y);
-            index.buckets[idx].push(TargetEntry {
-                entity,
-                team: bullet.team,
-                pos,
-            });
-        }
+        index.insert(entity, bullet.team, pos);
     }
 }
 

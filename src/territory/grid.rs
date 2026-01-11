@@ -307,21 +307,22 @@ impl TerritoryGrid {
     pub fn get_dirty_count(&self) -> u32 {
         self.dirty_count
     }
-    
-    /// 遍历所有脏 tile 的 (tile_x, tile_y) 坐标
+
+    /// 遍历所有脏 tile 的 (tile_x, tile_y) 坐标（零分配迭代器）
     pub fn iter_dirty_tiles(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
         self.dirty_tiles.iter().enumerate().flat_map(|(word_idx, &word)| {
             let mut w = word;
-            let mut results = Vec::new();
-            while w != 0 {
+            std::iter::from_fn(move || {
+                if w == 0 {
+                    return None;
+                }
                 let bit = w.trailing_zeros() as usize;
                 w &= w - 1; // 清除最低位的 1
                 let tile_idx = word_idx * 64 + bit;
                 let tile_x = (tile_idx % TILES_PER_ROW as usize) as u32;
                 let tile_y = (tile_idx / TILES_PER_ROW as usize) as u32;
-                results.push((tile_x, tile_y));
-            }
-            results
+                Some((tile_x, tile_y))
+            })
         })
     }
     
