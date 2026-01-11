@@ -52,7 +52,12 @@ impl Plugin for TerritoryPlugin {
             .init_resource::<BigBallPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
             .init_resource::<CollisionSpatialIndex>()
+            .init_resource::<PendingDespawns>()
             .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
+            .add_systems(
+                FixedUpdate,
+                clear_pending_despawns,
+            )
             .add_systems(
                 FixedUpdate,
                 (
@@ -71,7 +76,8 @@ impl Plugin for TerritoryPlugin {
                     bigball_hit_hq,
                     cleanup_depleted_units,
                     check_victory,
-                ),
+                )
+                    .after(clear_pending_despawns),
             )
             .add_systems(
                 Update,

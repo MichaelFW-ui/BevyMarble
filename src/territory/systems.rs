@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 use bevy::time::Virtual;
 use rand::Rng;
+use std::collections::HashSet;
 
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType, UnitDestroyedEvent, VictoryEvent};
@@ -22,6 +23,58 @@ const BULLET_SPEED: f32 = 250.0;
 const BULLET_MIN_SPEED: f32 = 100.0;
 const SHIELD_RADIUS: f32 = 50.0;
 const HQ_HALF_SIZE: f32 = 15.0;
+
+#[derive(Resource, Default)]
+pub struct PendingDespawns {
+    entities: HashSet<Entity>,
+}
+
+impl PendingDespawns {
+    fn clear(&mut self) {
+        self.entities.clear();
+    }
+
+    fn mark(&mut self, entity: Entity) -> bool {
+        self.entities.insert(entity)
+    }
+
+    fn contains(&self, entity: Entity) -> bool {
+        self.entities.contains(&entity)
+    }
+}
+
+pub fn clear_pending_despawns(mut pending: ResMut<PendingDespawns>) {
+    pending.clear();
+}
+
+fn despawn_once(
+    pending: &mut PendingDespawns,
+    commands: &mut Commands,
+    entity: Entity,
+) -> bool {
+    if pending.mark(entity) {
+        commands.entity(entity).despawn();
+        true
+    } else {
+        false
+    }
+}
+
+fn destroy_unit_once(
+    pending: &mut PendingDespawns,
+    commands: &mut Commands,
+    destroyed_events: &mut MessageWriter<UnitDestroyedEvent>,
+    team: TeamColor,
+    entity: Entity,
+) -> bool {
+    if pending.mark(entity) {
+        destroyed_events.write(UnitDestroyedEvent { team, entity });
+        commands.entity(entity).despawn();
+        true
+    } else {
+        false
+    }
+}
 
 #[derive(Resource, Clone)]
 pub struct TerritoryRenderAssets {
@@ -912,6 +965,7 @@ pub fn bigball_integrate(
 pub fn bullet_hit_terrain(
     profiler: Res<Profiler>,
     mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
     mut grid: ResMut<TerritoryGrid>,
     kernel: Res<BulletPaintKernel>,
     mut bullets: Query<(Entity, &mut Bullet, &Transform, &mut LastLogicPosition)>,
@@ -980,7 +1034,7 @@ pub fn bullet_hit_terrain(
             }
 
             if bullet.value == 0 {
-                commands.entity(entity).despawn();
+                despawn_once(&mut pending_despawns, &mut commands, entity);
             }
         }
 
@@ -1026,6 +1080,7 @@ fn segment_circle_t(a: Vec2, b: Vec2, c: Vec2, r: f32) -> Option<f32> {
 pub fn bullet_hit_units_manual(
     profiler: Res<Profiler>,
     mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
     collision_index: Res<CollisionSpatialIndex>,
     bullets: Query<(Entity, &Bullet, &Transform, &BulletPrevPosition)>,
     mut bigballs: Query<(Entity, &mut BigBall, &Transform)>,
@@ -1075,21 +1130,33 @@ pub fn bullet_hit_units_manual(
                 // HQ 被击中即摧毁（无耐久），发送销毁事件
                 // 胜利由 check_victory 系统判断（当只剩一队时）
                 if let Ok((_, hq, _)) = hqs.get(target) {
-                    destroyed_events.write(UnitDestroyedEvent { team: hq.team, entity: target });
+                    destroy_unit_once(
+                        &mut pending_despawns,
+                        &mut commands,
+                        &mut destroyed_events,
+                        hq.team,
+                        target,
+                    );
+                } else {
+                    despawn_once(&mut pending_despawns, &mut commands, target);
                 }
-                commands.entity(target).despawn();
-                commands.entity(bullet_entity).despawn();
+                despawn_once(&mut pending_despawns, &mut commands, bullet_entity);
             }
             HitKind::Shield => {
                 if let Ok((_e, mut shield, _t)) = shields.get_mut(target) {
                     let damage = bullet.value.min(shield.durability);
                     shield.durability -= damage;
                 }
-                commands.entity(bullet_entity).despawn();
+                despawn_once(&mut pending_despawns, &mut commands, bullet_entity);
                 if let Ok((_e, shield, _t)) = shields.get(target) {
                     if shield.durability == 0 {
-                        commands.entity(target).despawn();
-                        destroyed_events.write(UnitDestroyedEvent { team: shield.team, entity: target });
+                        destroy_unit_once(
+                            &mut pending_despawns,
+                            &mut commands,
+                            &mut destroyed_events,
+                            shield.team,
+                            target,
+                        );
                     }
                 }
             }
@@ -1098,11 +1165,16 @@ pub fn bullet_hit_units_manual(
                     let damage = bullet.value.min(ball.size);
                     ball.size -= damage;
                 }
-                commands.entity(bullet_entity).despawn();
+                despawn_once(&mut pending_despawns, &mut commands, bullet_entity);
                 if let Ok((_e, ball, _t)) = bigballs.get(target) {
                     if ball.size == 0 {
-                        commands.entity(target).despawn();
-                        destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity: target });
+                        destroy_unit_once(
+                            &mut pending_despawns,
+                            &mut commands,
+                            &mut destroyed_events,
+                            ball.team,
+                            target,
+                        );
                     }
                 }
             }
@@ -1122,6 +1194,7 @@ enum HitKind {
 pub fn bullet_bullet_collision_manual(
     profiler: Res<Profiler>,
     mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
     settings: Res<TerritorySettings>,
     collision_index: Res<CollisionSpatialIndex>,
     mut bullets: Query<(Entity, &mut Bullet, &Transform)>,
@@ -1161,19 +1234,22 @@ pub fn bullet_bullet_collision_manual(
 
     // 第二阶段：处理碰撞
     for &(e1, e2, _, _) in collision_pairs.iter() {
+        if pending_despawns.contains(e1) || pending_despawns.contains(e2) {
+            continue;
+        }
         let Ok([(_, mut bullet1, _), (_, mut bullet2, _)]) = bullets.get_many_mut([e1, e2]) else {
             continue;
         };
 
         if bullet1.value > bullet2.value {
             bullet1.value -= bullet2.value;
-            commands.entity(e2).despawn();
+            despawn_once(&mut pending_despawns, &mut commands, e2);
         } else if bullet2.value > bullet1.value {
             bullet2.value -= bullet1.value;
-            commands.entity(e1).despawn();
+            despawn_once(&mut pending_despawns, &mut commands, e1);
         } else {
-            commands.entity(e1).despawn();
-            commands.entity(e2).despawn();
+            despawn_once(&mut pending_despawns, &mut commands, e1);
+            despawn_once(&mut pending_despawns, &mut commands, e2);
         }
     }
 }
@@ -1372,6 +1448,7 @@ pub fn bigball_collision(
 pub fn bigball_hit_hq(
     profiler: Res<Profiler>,
     mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
     bigballs: Query<(&BigBall, &Transform)>,
     hqs: Query<(Entity, &HQ, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
@@ -1393,8 +1470,13 @@ pub fn bigball_hit_hq(
             
             if dist_sq <= collision_dist * collision_dist {
                 // 大球撞击敌方 HQ，摧毁 HQ
-                destroyed_events.write(UnitDestroyedEvent { team: hq.team, entity: hq_entity });
-                commands.entity(hq_entity).despawn();
+                destroy_unit_once(
+                    &mut pending_despawns,
+                    &mut commands,
+                    &mut destroyed_events,
+                    hq.team,
+                    hq_entity,
+                );
             }
         }
     }
@@ -1404,6 +1486,7 @@ pub fn bigball_hit_hq(
 pub fn cleanup_depleted_units(
     profiler: Res<Profiler>,
     mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
     bigballs: Query<(Entity, &BigBall)>,
     machine_guns: Query<(Entity, &MachineGun)>,
     ciws_query: Query<(Entity, &CIWS)>,
@@ -1412,22 +1495,19 @@ pub fn cleanup_depleted_units(
     let _scope = profiler.scope(ScopeId::TerritoryCleanupDepletedUnits);
     for (entity, ball) in bigballs.iter() {
         if ball.size == 0 {
-            commands.entity(entity).despawn();
-            destroyed_events.write(UnitDestroyedEvent { team: ball.team, entity });
+            destroy_unit_once(&mut pending_despawns, &mut commands, &mut destroyed_events, ball.team, entity);
         }
     }
 
     for (entity, gun) in machine_guns.iter() {
         if gun.bullets == 0 {
-            commands.entity(entity).despawn();
-            destroyed_events.write(UnitDestroyedEvent { team: gun.team, entity });
+            destroy_unit_once(&mut pending_despawns, &mut commands, &mut destroyed_events, gun.team, entity);
         }
     }
 
     for (entity, ciws) in ciws_query.iter() {
         if ciws.bullets == 0 {
-            commands.entity(entity).despawn();
-            destroyed_events.write(UnitDestroyedEvent { team: ciws.team, entity });
+            destroy_unit_once(&mut pending_despawns, &mut commands, &mut destroyed_events, ciws.team, entity);
         }
     }
 }
