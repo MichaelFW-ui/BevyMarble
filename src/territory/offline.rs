@@ -84,7 +84,6 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
         .init_resource::<GameOver>()
         .init_resource::<Profiler>()
         .init_resource::<BulletPaintKernel>()
-        .init_resource::<BigBallPaintKernel>()
         .init_resource::<TargetSpatialIndex>()
         .init_resource::<CollisionSpatialIndex>()
         .init_resource::<PendingDespawns>()

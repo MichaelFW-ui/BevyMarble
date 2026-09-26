@@ -73,3 +73,7 @@ pub struct LastLogicPosition(pub Vec2);
 /// 大球数值文本标记（作为大球的子实体）
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BigBallValueText;
+
+/// 大球的可缩放圆形子实体。
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BigBallVisual;

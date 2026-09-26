@@ -49,7 +49,6 @@ impl Plugin for TerritoryPlugin {
             .insert_resource(TerritorySettings::default())
             .init_resource::<GameOver>()
             .init_resource::<BulletPaintKernel>()
-            .init_resource::<BigBallPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
             .init_resource::<CollisionSpatialIndex>()
             .init_resource::<PendingDespawns>()

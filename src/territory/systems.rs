@@ -14,6 +14,11 @@ use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use super::grid::TerritoryGrid;
 
 const BIGBALL_RADIUS: f32 = 15.0;
+const BIGBALL_MAX_RADIUS: f32 = TERRITORY_LOGIC_WIDTH / 8.0;
+
+fn bigball_radius(size: u64) -> f32 {
+    (BIGBALL_RADIUS + 0.1 * (size as f64).sqrt() as f32).min(BIGBALL_MAX_RADIUS)
+}
 const BIGBALL_SPEED: f32 = 100.0;
 const BULLET_RADIUS: f32 = 6.0;
 const BULLET_WIDTH: f32 = BULLET_RADIUS * 2.0;
@@ -159,31 +164,6 @@ impl Default for BulletPaintKernel {
         }
 
         Self { row_spans, points_est }
-    }
-}
-
-#[derive(Resource, Debug, Clone)]
-pub struct BigBallPaintKernel {
-    pub offsets: Vec<(i32, i32)>,
-    pub radius: i32,
-}
-
-impl Default for BigBallPaintKernel {
-    fn default() -> Self {
-        let cells_per_unit = 1024.0 / TERRITORY_LOGIC_WIDTH;
-        // 保持与原先 `as i32` 的行为一致（向 0 取整）
-        let radius = (BIGBALL_RADIUS * cells_per_unit).max(1.0) as i32;
-
-        let mut offsets = Vec::new();
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= radius * radius {
-                    offsets.push((dx, dy));
-                }
-            }
-        }
-
-        Self { offsets, radius }
     }
 }
 
@@ -558,7 +538,7 @@ pub fn update_collision_spatial_index(
             team: ball.team,
             pos: transform.translation.truncate(),
             kind: CollisionEntityKind::BigBall,
-            radius: BIGBALL_RADIUS,
+            radius: bigball_radius(ball.size),
             value: ball.size,
         });
     }
@@ -667,14 +647,19 @@ fn spawn_bigball(
             LogicPosition(position),
             LastLogicPosition(position),
             KinematicVelocity(velocity),
-            Mesh2d(mesh),
-            MeshMaterial2d(material),
             Transform::from_translation(position.extend(1.0)),
         ))
         .insert(RenderLayers::layer(1))
         .id();
 
     commands.entity(ball_entity).with_children(|parent| {
+        parent.spawn((
+            BigBallVisual,
+            RenderLayers::layer(1),
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform::from_scale(Vec3::splat(bigball_radius(size) / BIGBALL_RADIUS)),
+        ));
         parent.spawn((
             BigBallValueText,
             RenderLayers::layer(1),
@@ -944,7 +929,7 @@ pub fn bullet_integrate(
 pub fn bigball_integrate(
     profiler: Res<Profiler>,
     time: Res<Time>,
-    mut bigballs: Query<(&mut Transform, &mut KinematicVelocity), With<BigBall>>,
+    mut bigballs: Query<(&BigBall, &mut Transform, &mut KinematicVelocity)>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBigballIntegrate);
     let dt = time.delta_secs();
@@ -952,13 +937,12 @@ pub fn bigball_integrate(
         return;
     }
 
-    let r = BIGBALL_RADIUS;
-    let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
-    let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
-    let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + r;
-    let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - r;
-
-    for (mut transform, mut velocity) in bigballs.iter_mut() {
+    for (ball, mut transform, mut velocity) in bigballs.iter_mut() {
+        let r = bigball_radius(ball.size);
+        let min_x = -TERRITORY_LOGIC_WIDTH / 2.0 + r;
+        let max_x = TERRITORY_LOGIC_WIDTH / 2.0 - r;
+        let min_y = -TERRITORY_LOGIC_HEIGHT / 2.0 + r;
+        let max_y = TERRITORY_LOGIC_HEIGHT / 2.0 - r;
         let mut pos = transform.translation.truncate();
         pos += velocity.0 * dt;
 
@@ -1112,7 +1096,7 @@ pub fn bullet_hit_units_manual(
     let _scope = profiler.scope(ScopeId::TerritoryBulletHitUnits);
 
     // 最大查询半径：护盾半径 + 子弹半径
-    let max_query_radius = SHIELD_RADIUS + BULLET_RADIUS;
+    let max_query_radius = BIGBALL_MAX_RADIUS.max(SHIELD_RADIUS) + BULLET_RADIUS;
 
     for (bullet_entity, bullet, transform, prev) in bullets.iter() {
         let a = prev.0;
@@ -1353,7 +1337,6 @@ impl ShieldCoverage {
 pub fn bigball_occupy_territory(
     profiler: Res<Profiler>,
     mut grid: ResMut<TerritoryGrid>,
-    kernel: Res<BigBallPaintKernel>,
     mut bigballs: Query<(&mut BigBall, &Transform, &mut LogicPosition, &mut LastLogicPosition)>,
     shields: Query<(Entity, &Shield, &LogicPosition), Without<BigBall>>,
     mut shield_coverage: Local<ShieldCoverage>,
@@ -1379,21 +1362,20 @@ pub fn bigball_occupy_territory(
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
             'path: for (cx, cy) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32) {
                 // 对于路径上的每个点，占领以它为中心的圆形区域（查表 offset）
-                for (dx, dy) in kernel.offsets.iter().copied() {
-                    if ball.size == 0 {
-                        break 'path;
-                    }
-                    let x = cx + dx;
+                let radius = (bigball_radius(ball.size) * grid.width as f32 / TERRITORY_LOGIC_WIDTH) as i32;
+                for dy in -radius..=radius {
+                    let dx_max = ((radius * radius - dy * dy) as f32).sqrt() as i32;
                     let y = cy + dy;
-
-                    if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
-                        if !shield_coverage.enemy_protects(x as u32, y as u32, grid.width, ball.team)
+                    if y < 0 || y >= grid.height as i32 { continue; }
+                    for dx in -dx_max..=dx_max {
+                        if ball.size == 0 { break 'path; }
+                        let x = cx + dx;
+                        if x >= 0 && x < grid.width as i32
+                            && !shield_coverage.enemy_protects(x as u32, y as u32, grid.width, ball.team)
                             && grid.occupy(x as u32, y as u32, ball.team, &[])
                         {
                             ball.size -= 1;
-                            if profiling {
-                                occupied_cells += 1;
-                            }
+                            if profiling { occupied_cells += 1; }
                         }
                     }
                 }
@@ -1476,15 +1458,14 @@ pub fn bigball_collision(
     let _scope = profiler.scope(ScopeId::TerritoryBigballCollision);
     collision_pairs.clear();
 
-    let collision_dist = BIGBALL_RADIUS * 2.0;
-    let collision_dist_sq = collision_dist * collision_dist;
 
     // 第一阶段：收集所有碰撞对
     for (e1, ball1, t1, _) in bigballs.iter() {
         let p1 = t1.translation.truncate();
         let team1 = ball1.team;
 
-        for entry in collision_index.query_nearby(p1, collision_dist) {
+        let r1 = bigball_radius(ball1.size);
+        for entry in collision_index.query_nearby(p1, r1 + BIGBALL_MAX_RADIUS) {
             if entry.kind != CollisionEntityKind::BigBall {
                 continue;
             }
@@ -1497,7 +1478,8 @@ pub fn bigball_collision(
             let p2 = entry.pos;
             let delta = p2 - p1;
             let dist_sq = delta.length_squared();
-            if dist_sq >= collision_dist_sq || dist_sq <= 1e-8 {
+            let collision_dist = r1 + entry.radius;
+            if dist_sq >= collision_dist * collision_dist || dist_sq <= 1e-8 {
                 continue;
             }
 
@@ -1519,7 +1501,8 @@ pub fn bigball_collision(
         }
         let dist = dist_sq.sqrt();
         let n = delta / dist;
-        let penetration = collision_dist - dist;
+        let penetration = bigball_radius(ball1.size) + bigball_radius(ball2.size) - dist;
+        if penetration <= 0.0 { continue; }
         let corr = n * (penetration * 0.5);
         t1.translation.x -= corr.x;
         t1.translation.y -= corr.y;
@@ -1567,7 +1550,7 @@ pub fn bigball_hit_hq(
             
             let hq_pos = hq_transform.translation.truncate();
             let dist_sq = ball_pos.distance_squared(hq_pos);
-            let collision_dist = BIGBALL_RADIUS + HQ_HALF_SIZE;
+            let collision_dist = bigball_radius(ball.size) + HQ_HALF_SIZE;
             
             if dist_sq <= collision_dist * collision_dist {
                 // 大球撞击敌方 HQ，摧毁 HQ
@@ -1690,15 +1673,20 @@ pub fn sync_bullet_rotation_to_velocity(
 pub fn update_bigball_value_text(
     profiler: Res<Profiler>,
     bigballs: Query<(Entity, &BigBall, Option<&Children>), Changed<BigBall>>,
-    mut texts: Query<&mut Text2d, With<BigBallValueText>>,
+    mut texts: Query<(&mut Text2d, &mut Transform), With<BigBallValueText>>,
+    mut visuals: Query<&mut Transform, (With<BigBallVisual>, Without<BigBallValueText>)>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateBigballValueText);
     for (_ball_entity, ball, children) in bigballs.iter() {
         let Some(children) = children else { continue; };
         let value = format_value(ball.size);
         for child in children.iter() {
-            if let Ok(mut text) = texts.get_mut(child) {
+            if let Ok((mut text, mut transform)) = texts.get_mut(child) {
                 text.0 = value.clone();
+                transform.translation.y = bigball_radius(ball.size) + 10.0;
+            }
+            if let Ok(mut transform) = visuals.get_mut(child) {
+                transform.scale = Vec3::splat(bigball_radius(ball.size) / BIGBALL_RADIUS);
             }
         }
     }
@@ -1774,5 +1762,15 @@ mod ciws_intercept_tests {
         assert!(direction.y > 0.0);
         let time = 100.0 / (direction.x * 250.0);
         assert!((direction * 250.0 * time - (Vec2::new(100.0, 0.0) + Vec2::new(0.0, 100.0) * time)).length() < 0.001);
+    }
+}
+
+#[cfg(test)]
+mod bigball_radius_tests {
+    use super::*;
+    #[test]
+    fn grows_and_caps_at_quarter_battle_width() {
+        assert!(bigball_radius(10_000) > bigball_radius(100));
+        assert_eq!(bigball_radius(u64::MAX) * 2.0, TERRITORY_LOGIC_WIDTH / 4.0);
     }
 }
