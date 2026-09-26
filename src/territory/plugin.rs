@@ -1,5 +1,7 @@
 use bevy::prelude::*;
+use bevy::time::Fixed;
 use bevy::sprite_render::Material2dPlugin;
+use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
 
 use super::grid::TerritoryGrid;
 use super::render::*;
@@ -44,7 +46,8 @@ pub struct TerritoryPlugin;
 
 impl Plugin for TerritoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<GridMaterial>::default())
+        app.add_plugins((Material2dPlugin::<GridMaterial>::default(), TransformInterpolationPlugin::default()))
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
             .insert_resource(TerritoryGrid::new(1024, 1024))
             .insert_resource(TerritorySettings::default())
             .init_resource::<GameOver>()
@@ -52,6 +55,7 @@ impl Plugin for TerritoryPlugin {
             .init_resource::<TargetSpatialIndex>()
             .init_resource::<CollisionSpatialIndex>()
             .init_resource::<PendingDespawns>()
+            .init_resource::<GridFrameBuffer>()
             .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
             .add_systems(
                 FixedUpdate,
@@ -71,6 +75,7 @@ impl Plugin for TerritoryPlugin {
                     bigball_occupy_territory,
                     cleanup_depleted_units,
                     check_victory,
+                    capture_grid_frame,
                 )
                     .chain(),
             )

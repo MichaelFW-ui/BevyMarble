@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 use bevy::time::Virtual;
+use bevy_transform_interpolation::prelude::TranslationInterpolation;
 use rand::Rng;
 use std::collections::HashSet;
 
@@ -647,6 +648,7 @@ fn spawn_bigball(
             LogicPosition(position),
             LastLogicPosition(position),
             KinematicVelocity(velocity),
+            TranslationInterpolation,
             Transform::from_translation(position.extend(1.0)),
         ))
         .insert(RenderLayers::layer(1))
@@ -868,6 +870,7 @@ fn spawn_bullet(
         LastLogicPosition(position),
         BulletPrevPosition(position),
         KinematicVelocity(velocity),
+        TranslationInterpolation,
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),

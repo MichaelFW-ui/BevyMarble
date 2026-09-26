@@ -14,7 +14,7 @@ use crate::profiler::Profiler;
 use super::components::*;
 use super::grid::TerritoryGrid;
 use super::plugin::{GameOver, TerritorySettings};
-use super::render::{GridMaterial, setup_grid_render, update_grid_render};
+use super::render::{GridFrameBuffer, capture_grid_frame, GridMaterial, setup_grid_render, update_grid_render};
 use super::systems::*;
 
 #[derive(Clone, Copy)]
@@ -87,6 +87,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
         .init_resource::<TargetSpatialIndex>()
         .init_resource::<CollisionSpatialIndex>()
         .init_resource::<PendingDespawns>()
+        .init_resource::<GridFrameBuffer>()
         .add_message::<VictoryEvent>()
         .add_message::<UnitDestroyedEvent>()
         .add_systems(Startup, (setup_territory_assets, setup_grid_render))
@@ -106,6 +107,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
             bigball_occupy_territory,
             cleanup_depleted_units,
             check_victory,
+            capture_grid_frame,
             update_grid_render,
         ).chain());
 

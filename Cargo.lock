@@ -1582,6 +1582,7 @@ version = "0.1.0"
 dependencies = [
  "avian2d",
  "bevy",
+ "bevy_transform_interpolation",
  "rand 0.8.5",
 ]
 
