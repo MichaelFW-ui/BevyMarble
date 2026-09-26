@@ -192,6 +192,7 @@ struct TargetEntry {
     entity: Entity,
     team: TeamColor,
     pos: Vec2,
+    velocity: Vec2,
 }
 
 // ==================== 碰撞空间索引 ====================
@@ -380,13 +381,13 @@ impl TargetSpatialIndex {
     }
 
     /// 插入实体并追踪活跃桶
-    fn insert(&mut self, entity: Entity, team: TeamColor, pos: Vec2) {
+    fn insert(&mut self, entity: Entity, team: TeamColor, pos: Vec2, velocity: Vec2) {
         if let Some((x, y)) = self.cell_of(pos) {
             let idx = self.bucket_index(x, y);
             if self.buckets[idx].is_empty() {
                 self.active_buckets.push(idx);
             }
-            self.buckets[idx].push(TargetEntry { entity, team, pos });
+            self.buckets[idx].push(TargetEntry { entity, team, pos, velocity });
         }
     }
 
@@ -409,10 +410,10 @@ impl TargetSpatialIndex {
         (left, bottom, left + self.cell_size, bottom + self.cell_size)
     }
 
-    fn nearest_enemy_pos(&self, origin: Vec2, team: TeamColor, metric: CiwsDistanceMetric) -> Option<Vec2> {
+    fn nearest_enemy(&self, origin: Vec2, team: TeamColor, metric: CiwsDistanceMetric) -> Option<TargetEntry> {
         let (cx, cy) = self.cell_of(origin)?;
 
-        let mut best: Option<(u64, f32, Vec2)> = None; // (entity_bits, score, pos)
+        let mut best: Option<(u64, f32, TargetEntry)> = None; // (entity_bits, score, target)
         let mut r = 0;
         let max_r = self.grid_w.max(self.grid_h);
         let eps = 1e-6_f32;
@@ -423,7 +424,7 @@ impl TargetSpatialIndex {
             let min_y = (cy - r).max(0);
             let max_y = (cy + r).min(self.grid_h - 1);
 
-            let visit_cell = |x: i32, y: i32, best: &mut Option<(u64, f32, Vec2)>| {
+            let visit_cell = |x: i32, y: i32, best: &mut Option<(u64, f32, TargetEntry)>| {
                 let idx = self.bucket_index(x, y);
                 for entry in &self.buckets[idx] {
                     if entry.team == team {
@@ -437,10 +438,10 @@ impl TargetSpatialIndex {
                         CiwsDistanceMetric::EuclideanSquared => origin.distance_squared(entry.pos),
                     };
                     match best {
-                        None => *best = Some((bits, score, entry.pos)),
+                        None => *best = Some((bits, score, *entry)),
                         Some((best_bits, best_score, _)) => {
                             if score + eps < *best_score || ((score - *best_score).abs() <= eps && bits < *best_bits) {
-                                *best = Some((bits, score, entry.pos));
+                                *best = Some((bits, score, *entry));
                             }
                         }
                     }
@@ -496,7 +497,7 @@ impl TargetSpatialIndex {
             r += 1;
         }
 
-        best.map(|(_, _, pos)| pos)
+        best.map(|(_, _, target)| target)
     }
 }
 
@@ -505,24 +506,24 @@ pub fn update_target_spatial_index(
     profiler: Res<Profiler>,
     mut index: ResMut<TargetSpatialIndex>,
     settings: Res<TerritorySettings>,
-    bigballs: Query<(Entity, &TerritoryUnit, &Transform), With<BigBall>>,
-    bullets: Query<(Entity, &Bullet, &Transform), With<Bullet>>,
+    bigballs: Query<(Entity, &TerritoryUnit, &Transform, &KinematicVelocity), With<BigBall>>,
+    bullets: Query<(Entity, &Bullet, &Transform, &KinematicVelocity), With<Bullet>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex);
     index.clear_active();
 
-    for (entity, unit, transform) in bigballs.iter() {
+    for (entity, unit, transform, velocity) in bigballs.iter() {
         let pos = transform.translation.truncate();
-        index.insert(entity, unit.team, pos);
+        index.insert(entity, unit.team, pos, velocity.0);
     }
 
     if !settings.ciws_target_bullets {
         return;
     }
 
-    for (entity, bullet, transform) in bullets.iter() {
+    for (entity, bullet, transform, velocity) in bullets.iter() {
         let pos = transform.translation.truncate();
-        index.insert(entity, bullet.team, pos);
+        index.insert(entity, bullet.team, pos, velocity.0);
     }
 }
 
@@ -812,6 +813,26 @@ pub fn machine_gun_rotate_fire(
     }
 }
 
+/// 求匀速目标与定速弹丸的最早正向交会方向。无解时仍朝目标当前位置射击。
+fn intercept_direction(origin: Vec2, target: Vec2, velocity: Vec2, speed: f32) -> Vec2 {
+    let relative = target - origin;
+    let a = velocity.length_squared() - speed * speed;
+    let b = 2.0 * relative.dot(velocity);
+    let c = relative.length_squared();
+    let time = if a.abs() < 1e-5 {
+        if b.abs() > 1e-5 { Some(-c / b) } else { None }
+    } else {
+        let discriminant = b * b - 4.0 * a * c;
+        if discriminant < 0.0 { None } else {
+            let root = discriminant.sqrt();
+            [-b - root, -b + root].map(|n| n / (2.0 * a))
+                .into_iter().filter(|t| *t > 0.0).reduce(f32::min)
+        }
+    };
+    (relative + velocity * time.filter(|t| *t > 0.0).unwrap_or(0.0))
+        .try_normalize().unwrap_or(Vec2::X)
+}
+
 /// 近防炮瞄准最近敌人射击
 pub fn ciws_target_fire(
     profiler: Res<Profiler>,
@@ -831,11 +852,11 @@ pub fn ciws_target_fire(
         }
 
         let ciws_pos = ciws_transform.translation.truncate();
-        if let Some(target_pos) = target_index.nearest_enemy_pos(ciws_pos, ciws.team, settings.ciws_distance_metric) {
+        if let Some(target) = target_index.nearest_enemy(ciws_pos, ciws.team, settings.ciws_distance_metric) {
             // 合并子弹：消耗最多 BULLET_MERGE_RATIO 颗，发射 1 颗高 value 子弹
             let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
             ciws.bullets -= bullets_to_consume;
-            let direction = (target_pos - ciws_pos).normalize();
+            let direction = intercept_direction(ciws_pos, target.pos, target.velocity, BULLET_SPEED);
             spawn_bullet(&mut commands, &render_assets, ciws.team, bullets_to_consume, ciws_pos, direction);
         }
     }
@@ -1740,5 +1761,18 @@ mod shield_coverage_tests {
                 assert!(!coverage.enemy_protects(x, y, grid.width, team));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ciws_intercept_tests {
+    use super::*;
+
+    #[test]
+    fn leads_perpendicular_target() {
+        let direction = intercept_direction(Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(0.0, 100.0), 250.0);
+        assert!(direction.y > 0.0);
+        let time = 100.0 / (direction.x * 250.0);
+        assert!((direction * 250.0 * time - (Vec2::new(100.0, 0.0) + Vec2::new(0.0, 100.0) * time)).length() < 0.001);
     }
 }
