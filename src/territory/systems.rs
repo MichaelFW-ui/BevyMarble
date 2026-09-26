@@ -193,8 +193,6 @@ struct CollisionEntry {
     pos: Vec2,
     kind: CollisionEntityKind,
     radius: f32,
-    /// 子弹专用：数值
-    value: u64,
 }
 
 #[derive(Resource, Debug)]
@@ -301,15 +299,10 @@ impl CollisionSpatialIndex {
         let min_y = start.y.min(end.y) - query_radius;
         let max_y = start.y.max(end.y) + query_radius;
 
-        let (min_cx, min_cy) = self.cell_of(Vec2::new(min_x, min_y)).unwrap_or((0, 0));
-        let (max_cx, max_cy) = self
-            .cell_of(Vec2::new(max_x, max_y))
-            .unwrap_or((self.grid_w - 1, self.grid_h - 1));
-
-        let min_cx = min_cx.max(0);
-        let max_cx = max_cx.min(self.grid_w - 1);
-        let min_cy = min_cy.max(0);
-        let max_cy = max_cy.min(self.grid_h - 1);
+        let min_cx = (((min_x - self.min_x) / self.cell_size).floor() as i32).clamp(0, self.grid_w - 1);
+        let max_cx = (((max_x - self.min_x) / self.cell_size).floor() as i32).clamp(0, self.grid_w - 1);
+        let min_cy = (((min_y - self.min_y) / self.cell_size).floor() as i32).clamp(0, self.grid_h - 1);
+        let max_cy = (((max_y - self.min_y) / self.cell_size).floor() as i32).clamp(0, self.grid_h - 1);
 
         (min_cy..=max_cy).flat_map(move |y| {
             (min_cx..=max_cx).flat_map(move |x| {
@@ -511,6 +504,7 @@ pub fn update_target_spatial_index(
 /// 为碰撞检测构建空间索引（子弹、大球、护盾、HQ）
 pub fn update_collision_spatial_index(
     profiler: Res<Profiler>,
+    settings: Option<Res<TerritorySettings>>,
     mut index: ResMut<CollisionSpatialIndex>,
     bullets: Query<(Entity, &Bullet, &Transform)>,
     bigballs: Query<(Entity, &BigBall, &Transform)>,
@@ -520,16 +514,17 @@ pub fn update_collision_spatial_index(
     let _scope = profiler.scope(ScopeId::TerritoryUpdateCollisionSpatialIndex);
     index.clear_active();
 
-    // 索引子弹
-    for (entity, bullet, transform) in bullets.iter() {
-        index.insert(CollisionEntry {
-            entity,
-            team: bullet.team,
-            pos: transform.translation.truncate(),
-            kind: CollisionEntityKind::Bullet,
-            radius: BULLET_RADIUS,
-            value: bullet.value,
-        });
+    // 仅在启用子弹互撞时索引子弹；普通命中查询不需要遍历这些条目。
+    if settings.is_some_and(|settings| settings.enable_bullet_bullet_collision) {
+        for (entity, bullet, transform) in bullets.iter() {
+            index.insert(CollisionEntry {
+                entity,
+                team: bullet.team,
+                pos: transform.translation.truncate(),
+                kind: CollisionEntityKind::Bullet,
+                radius: BULLET_RADIUS,
+            });
+        }
     }
 
     // 索引大球
@@ -540,7 +535,6 @@ pub fn update_collision_spatial_index(
             pos: transform.translation.truncate(),
             kind: CollisionEntityKind::BigBall,
             radius: bigball_radius(ball.size),
-            value: ball.size,
         });
     }
 
@@ -552,7 +546,6 @@ pub fn update_collision_spatial_index(
             pos: transform.translation.truncate(),
             kind: CollisionEntityKind::Shield,
             radius: shield.radius,
-            value: shield.durability,
         });
     }
 
@@ -564,7 +557,6 @@ pub fn update_collision_spatial_index(
             pos: transform.translation.truncate(),
             kind: CollisionEntityKind::Hq,
             radius: HQ_HALF_SIZE,
-            value: 0,
         });
     }
 }
@@ -651,6 +643,7 @@ fn spawn_bigball(
             LastLogicPosition(position),
             KinematicVelocity(velocity),
             TranslationInterpolation,
+            Visibility::Visible,
             Transform::from_translation(position.extend(1.0)),
         ))
         .insert(RenderLayers::layer(1))
@@ -1470,7 +1463,7 @@ pub fn bigball_collision(
     profiler: Res<Profiler>,
     collision_index: Res<CollisionSpatialIndex>,
     mut bigballs: Query<(Entity, &mut BigBall, &mut Transform, &mut KinematicVelocity)>,
-    mut collision_pairs: Local<Vec<(Entity, Entity, Vec2)>>,
+    mut collision_pairs: Local<Vec<(Entity, Entity)>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBigballCollision);
     collision_pairs.clear();
@@ -1479,16 +1472,14 @@ pub fn bigball_collision(
     // 第一阶段：收集所有碰撞对
     for (e1, ball1, t1, _) in bigballs.iter() {
         let p1 = t1.translation.truncate();
-        let team1 = ball1.team;
-
         let r1 = bigball_radius(ball1.size);
         for entry in collision_index.query_nearby(p1, r1 + BIGBALL_MAX_RADIUS) {
             if entry.kind != CollisionEntityKind::BigBall {
                 continue;
             }
             let e2 = entry.entity;
-            if e1 >= e2 || entry.team == team1 {
-                // e1 >= e2 确保每对只处理一次
+            if e1 >= e2 {
+                // 每对只处理一次，同队也要产生实体碰撞
                 continue;
             }
 
@@ -1496,28 +1487,25 @@ pub fn bigball_collision(
             let delta = p2 - p1;
             let dist_sq = delta.length_squared();
             let collision_dist = r1 + entry.radius;
-            if dist_sq >= collision_dist * collision_dist || dist_sq <= 1e-8 {
+            if dist_sq >= collision_dist * collision_dist {
                 continue;
             }
 
-            collision_pairs.push((e1, e2, delta));
+            collision_pairs.push((e1, e2));
         }
     }
 
     // 第二阶段：处理碰撞
-    for &(e1, e2, delta) in collision_pairs.iter() {
+    for &(e1, e2) in collision_pairs.iter() {
         let Ok([(_, mut ball1, mut t1, mut v1), (_, mut ball2, mut t2, mut v2)]) =
             bigballs.get_many_mut([e1, e2])
         else {
             continue;
         };
 
-        let dist_sq = delta.length_squared();
-        if dist_sq <= 1e-8 {
-            continue;
-        }
-        let dist = dist_sq.sqrt();
-        let n = delta / dist;
+        let current_delta = t2.translation.truncate() - t1.translation.truncate();
+        let dist = current_delta.length();
+        let n = if dist > 1e-4 { current_delta / dist } else { Vec2::X };
         let penetration = bigball_radius(ball1.size) + bigball_radius(ball2.size) - dist;
         if penetration <= 0.0 { continue; }
         let corr = n * (penetration * 0.5);
@@ -1530,18 +1518,19 @@ pub fn bigball_collision(
         let m2 = (ball2.size.min(1000) as f32).max(1.0);
         let rel = v1.0 - v2.0;
         let rel_n = rel.dot(n);
-        if rel_n < 0.0 {
-            let e = 0.9;
-            let j_imp = (-(1.0 + e) * rel_n) / (1.0 / m1 + 1.0 / m2);
-            let impulse = j_imp * n;
-            v1.0 += impulse / m1;
-            v2.0 -= impulse / m2;
+        if rel_n > 0.0 {
+            let restitution = 0.9;
+            let impulse = n * ((1.0 + restitution) * rel_n / (1.0 / m1 + 1.0 / m2));
+            v1.0 -= impulse / m1;
+            v2.0 += impulse / m2;
         }
 
-        let loss1 = ball2.size / 10;
-        let loss2 = ball1.size / 10;
-        ball1.size = ball1.size.saturating_sub(loss1);
-        ball2.size = ball2.size.saturating_sub(loss2);
+        if ball1.team != ball2.team {
+            let loss1 = ball2.size / 10;
+            let loss2 = ball1.size / 10;
+            ball1.size = ball1.size.saturating_sub(loss1);
+            ball2.size = ball2.size.saturating_sub(loss2);
+        }
     }
 }
 
@@ -1896,5 +1885,105 @@ mod hq_defeat_tests {
         app.add_systems(Update, (bigball_hit_hq, eliminate_defeated_teams, check_victory).chain());
         app.update();
         assert_eq!(app.world().resource::<GameOver>().winner, Some(TeamColor::Red));
+    }
+}
+
+#[cfg(test)]
+mod bigball_collision_tests {
+    use super::*;
+
+    fn collide(team1: TeamColor, team2: TeamColor, x1: f32, x2: f32) -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .init_resource::<CollisionSpatialIndex>()
+            .add_systems(Update, (update_collision_spatial_index, bigball_collision).chain());
+        let e1 = app.world_mut().spawn((
+            BigBall { team: team1, size: 100 },
+            Transform::from_xyz(x1, 0.0, 0.0),
+            KinematicVelocity(Vec2::new(100.0, 0.0)),
+        )).id();
+        let e2 = app.world_mut().spawn((
+            BigBall { team: team2, size: 100 },
+            Transform::from_xyz(x2, 0.0, 0.0),
+            KinematicVelocity(Vec2::new(-100.0, 0.0)),
+        )).id();
+        app.update();
+        (app, e1, e2)
+    }
+
+    #[test]
+    fn same_team_balls_separate_and_bounce_without_losing_value() {
+        let (app, e1, e2) = collide(TeamColor::Red, TeamColor::Red, -10.0, 10.0);
+        let world = app.world();
+        assert!(world.get::<Transform>(e1).unwrap().translation.x < -10.0);
+        assert!(world.get::<Transform>(e2).unwrap().translation.x > 10.0);
+        assert!(world.get::<KinematicVelocity>(e1).unwrap().0.x < 0.0);
+        assert!(world.get::<KinematicVelocity>(e2).unwrap().0.x > 0.0);
+        assert_eq!(world.get::<BigBall>(e1).unwrap().size, 100);
+        assert_eq!(world.get::<BigBall>(e2).unwrap().size, 100);
+    }
+
+    #[test]
+    fn balls_at_identical_spawn_point_are_separated() {
+        let (app, e1, e2) = collide(TeamColor::Blue, TeamColor::Blue, 0.0, 0.0);
+        let world = app.world();
+        let separation = (world.get::<Transform>(e1).unwrap().translation.x
+            - world.get::<Transform>(e2).unwrap().translation.x).abs();
+        assert!(separation > 0.0);
+    }
+
+    #[test]
+    fn enemy_balls_still_lose_value() {
+        let (app, e1, e2) = collide(TeamColor::Red, TeamColor::Blue, -10.0, 10.0);
+        let world = app.world();
+        assert_eq!(world.get::<BigBall>(e1).unwrap().size, 90);
+        assert_eq!(world.get::<BigBall>(e2).unwrap().size, 90);
+    }
+}
+
+#[cfg(test)]
+mod collision_index_bounds_tests {
+    use super::*;
+
+    #[test]
+    fn bullet_entries_follow_collision_setting() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .init_resource::<CollisionSpatialIndex>()
+            .insert_resource(TerritorySettings::default())
+            .add_systems(Update, update_collision_spatial_index);
+        app.world_mut().spawn((Bullet { team: TeamColor::Red, value: 1 }, Transform::default()));
+        app.update();
+        let indexed = |app: &App| app.world().resource::<CollisionSpatialIndex>()
+            .active_buckets.iter()
+            .map(|&bucket| app.world().resource::<CollisionSpatialIndex>().buckets[bucket].len())
+            .sum::<usize>();
+        assert_eq!(indexed(&app), 0);
+        app.world_mut().resource_mut::<TerritorySettings>().enable_bullet_bullet_collision = true;
+        app.update();
+        assert_eq!(indexed(&app), 1);
+    }
+
+    #[test]
+    fn segment_near_left_edge_does_not_scan_distant_rows() {
+        let mut index = CollisionSpatialIndex::default();
+        let near = Entity::from_bits(1);
+        let far = Entity::from_bits(2);
+        for (entity, pos) in [(near, Vec2::new(-480.0, 400.0)), (far, Vec2::new(-480.0, -400.0))] {
+            index.insert(CollisionEntry {
+                entity,
+                team: TeamColor::Blue,
+                pos,
+                kind: CollisionEntityKind::BigBall,
+                radius: 15.0,
+            });
+        }
+        let found: Vec<_> = index.query_segment(
+            Vec2::new(-490.0, 400.0), Vec2::new(-480.0, 400.0), 40.0,
+        ).map(|entry| entry.entity).collect();
+        assert!(found.contains(&near));
+        assert!(!found.contains(&far));
     }
 }
