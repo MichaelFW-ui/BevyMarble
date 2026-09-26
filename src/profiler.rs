@@ -535,10 +535,12 @@ fn update_overlay(
     }
     cache.next_render_at = t + 0.1;
 
-    let fps = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
+    let fps = match (cache.history.front(), cache.history.back()) {
+        (Some((first, _)), Some((last, _))) if last > first => {
+            (cache.history.len() - 1) as f64 / (last - first)
+        }
+        _ => 0.0,
+    };
     let max_1s_ms = cache
         .history
         .iter()
@@ -560,7 +562,7 @@ fn update_overlay(
 
     let mut s = String::new();
     s.push_str(&format!(
-        "FPS {fps:>5.1} | frame {frame_ms:>5.2}ms | 1s avg {avg_1s_ms:>5.2}ms | 1s max {max_1s_ms:>5.2}ms\n"
+        "App FPS (1s) {fps:>5.1} | app dt {frame_ms:>5.2}ms | 1s avg {avg_1s_ms:>5.2}ms | 1s max {max_1s_ms:>5.2}ms\n"
     ));
     s.push_str(&format!(
         "Main {update_ms:>6.2}ms | accounted {accounted_ms:>6.2}ms | other {unaccounted_ms:>6.2}ms | F3 toggle\n"
