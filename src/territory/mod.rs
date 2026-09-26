@@ -1,6 +1,7 @@
 mod components;
 mod coords;
 mod grid;
+pub mod offline;
 mod plugin;
 mod render;
 mod setup;

@@ -11,7 +11,7 @@ use crate::profiler::{CounterId, Profiler, ScopeId};
 use crate::territory::{CiwsDistanceMetric, GameOver, TerritorySettings};
 use super::components::*;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
-use super::grid::{ShieldInfo, TerritoryGrid};
+use super::grid::TerritoryGrid;
 
 const BIGBALL_RADIUS: f32 = 15.0;
 const BIGBALL_SPEED: f32 = 100.0;
@@ -535,7 +535,7 @@ pub fn update_collision_spatial_index(
     shields: Query<(Entity, &Shield, &Transform)>,
     hqs: Query<(Entity, &HQ, &Transform)>,
 ) {
-    let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex); // 复用 scope
+    let _scope = profiler.scope(ScopeId::TerritoryUpdateCollisionSpatialIndex);
     index.clear_active();
 
     // 索引子弹
@@ -925,7 +925,7 @@ pub fn bigball_integrate(
     time: Res<Time>,
     mut bigballs: Query<(&mut Transform, &mut KinematicVelocity), With<BigBall>>,
 ) {
-    let _scope = profiler.scope(ScopeId::TerritoryContainUnits);
+    let _scope = profiler.scope(ScopeId::TerritoryBigballIntegrate);
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
@@ -1254,44 +1254,124 @@ pub fn bullet_bullet_collision_manual(
     }
 }
 
+/// 护盾覆盖位图按队伍占 4 bit。护盾静止时复用，避免每次占领都做距离计算。
+#[derive(Clone, Copy, PartialEq)]
+struct ShieldCoverageKey {
+    entity: Entity,
+    team: TeamColor,
+    pos: Vec2,
+    radius: f32,
+}
+
+#[derive(Default)]
+pub(super) struct ShieldCoverage {
+    mask: Vec<u8>,
+    keys: Vec<ShieldCoverageKey>,
+    next_keys: Vec<ShieldCoverageKey>,
+    width: u32,
+    height: u32,
+}
+
+impl ShieldCoverage {
+    fn update(&mut self, grid: &TerritoryGrid, shields: impl Iterator<Item = ShieldCoverageKey>) {
+        self.next_keys.clear();
+        self.next_keys.extend(shields);
+        let cells = (grid.width * grid.height) as usize;
+        if self.mask.len() == cells && self.width == grid.width && self.height == grid.height
+            && self.keys == self.next_keys {
+            return;
+        }
+        std::mem::swap(&mut self.keys, &mut self.next_keys);
+        self.width = grid.width;
+        self.height = grid.height;
+        self.mask.resize(cells, 0);
+        self.mask.fill(0);
+
+        let x_scale = grid.width as f32 / TERRITORY_LOGIC_WIDTH;
+        let y_scale = grid.height as f32 / TERRITORY_LOGIC_HEIGHT;
+        for shield in &self.keys {
+            let min_y = ((shield.pos.y - shield.radius + TERRITORY_LOGIC_HEIGHT * 0.5) * y_scale - 0.5)
+                .ceil().max(0.0) as u32;
+            let max_y = ((shield.pos.y + shield.radius + TERRITORY_LOGIC_HEIGHT * 0.5) * y_scale - 0.5)
+                .floor().min((grid.height - 1) as f32) as u32;
+            if min_y > max_y {
+                continue;
+            }
+            for y in min_y..=max_y {
+                let cell_y = (y as f32 + 0.5) / y_scale - TERRITORY_LOGIC_HEIGHT * 0.5;
+                let dy = cell_y - shield.pos.y;
+                let remaining = shield.radius * shield.radius - dy * dy;
+                if remaining < 0.0 {
+                    continue;
+                }
+                let dx = remaining.sqrt();
+                let min_x = ((shield.pos.x - dx + TERRITORY_LOGIC_WIDTH * 0.5) * x_scale - 0.5)
+                    .ceil().max(0.0) as u32;
+                let max_x = ((shield.pos.x + dx + TERRITORY_LOGIC_WIDTH * 0.5) * x_scale - 0.5)
+                    .floor().min((grid.width - 1) as f32) as u32;
+                if min_x > max_x {
+                    continue;
+                }
+                let row = y as usize * grid.width as usize;
+                let bit = 1u8 << shield.team.index();
+                for cell in &mut self.mask[row + min_x as usize..=row + max_x as usize] {
+                    *cell |= bit;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn enemy_protects(&self, x: u32, y: u32, width: u32, team: TeamColor) -> bool {
+        let mask = self.mask[(y * width + x) as usize];
+        mask & !(1u8 << team.index()) != 0
+    }
+}
+
 /// 大球占领格子 + 同步逻辑坐标
 pub fn bigball_occupy_territory(
     profiler: Res<Profiler>,
     mut grid: ResMut<TerritoryGrid>,
     kernel: Res<BigBallPaintKernel>,
     mut bigballs: Query<(&mut BigBall, &Transform, &mut LogicPosition, &mut LastLogicPosition)>,
-    shields: Query<(&Shield, &LogicPosition), Without<BigBall>>,
-    mut shield_cache: Local<Vec<ShieldInfo>>,
+    shields: Query<(Entity, &Shield, &LogicPosition), Without<BigBall>>,
+    mut shield_coverage: Local<ShieldCoverage>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBigballOccupyTerritory);
     let profiling = profiler.is_enabled();
     let mut occupied_cells = 0u64;
-    shield_cache.clear();
-    shield_cache.extend(shields.iter().map(|(shield, logic_pos)| ShieldInfo {
-        pos: logic_pos.0,
-        radius_sq: shield.radius * shield.radius,
+    shield_coverage.update(&grid, shields.iter().map(|(entity, shield, logic_pos)| ShieldCoverageKey {
+        entity,
         team: shield.team,
+        pos: logic_pos.0,
+        radius: shield.radius,
     }));
 
     for (mut ball, transform, mut logic_pos, mut last_logic_pos) in bigballs.iter_mut() {
+        if ball.size == 0 {
+            continue;
+        }
         // 更新逻辑坐标
         logic_pos.0 = transform.translation.truncate();
         let current_pos = logic_pos.0;
 
         if let (Some((x0, y0)), Some((x1, y1))) = (grid.logic_to_grid(last_logic_pos.0), grid.logic_to_grid(current_pos)) {
-            for (cx, cy) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32) {
+            'path: for (cx, cy) in bresenham_iter(x0 as i32, y0 as i32, x1 as i32, y1 as i32) {
                 // 对于路径上的每个点，占领以它为中心的圆形区域（查表 offset）
                 for (dx, dy) in kernel.offsets.iter().copied() {
+                    if ball.size == 0 {
+                        break 'path;
+                    }
                     let x = cx + dx;
                     let y = cy + dy;
 
                     if x >= 0 && y >= 0 && x < grid.width as i32 && y < grid.height as i32 {
-                        if grid.occupy(x as u32, y as u32, ball.team, &shield_cache) {
-                            if ball.size > 0 {
-                                ball.size -= 1;
-                                if profiling {
-                                    occupied_cells += 1;
-                                }
+                        if !shield_coverage.enemy_protects(x as u32, y as u32, grid.width, ball.team)
+                            && grid.occupy(x as u32, y as u32, ball.team, &[])
+                        {
+                            ball.size -= 1;
+                            if profiling {
+                                occupied_cells += 1;
                             }
                         }
                     }
@@ -1453,7 +1533,7 @@ pub fn bigball_hit_hq(
     hqs: Query<(Entity, &HQ, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
 ) {
-    let _scope = profiler.scope(ScopeId::TerritoryBigballCollision); // 复用同一 scope
+    let _scope = profiler.scope(ScopeId::TerritoryBigballHitHq);
     
     for (ball, ball_transform) in bigballs.iter() {
         let ball_pos = ball_transform.translation.truncate();
@@ -1621,5 +1701,44 @@ pub fn handle_unit_destroyed_event(
 ) {
     for event in events.read() {
         info!("💥 Unit destroyed: Team {:?}, Entity {:?}", event.team, event.entity);
+    }
+}
+
+#[cfg(test)]
+mod shield_coverage_tests {
+    use super::*;
+
+    #[test]
+    fn shield_mask_matches_circle_checks() {
+        let grid = TerritoryGrid::new(1024, 1024);
+        let shields = [
+            (TeamColor::Red, Vec2::new(-490.0, -480.0)),
+            (TeamColor::Blue, Vec2::new(10.0, 17.0)),
+            (TeamColor::Green, Vec2::new(485.0, 490.0)),
+        ];
+        let mut coverage = ShieldCoverage::default();
+        coverage.update(&grid, shields.into_iter().enumerate().map(|(i, (team, pos))| ShieldCoverageKey {
+            entity: Entity::from_bits(i as u64 + 1), team, pos, radius: 50.0,
+        }));
+
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                let pos = grid.grid_to_logic(x, y);
+                for team in TeamColor::all() {
+                    let expected = shields.iter().any(|(shield_team, center)| {
+                        *shield_team != team && pos.distance_squared(*center) <= 50.0 * 50.0
+                    });
+                    assert_eq!(coverage.enemy_protects(x, y, grid.width, team), expected,
+                        "护盾判定不一致：({x}, {y}) {team:?}");
+                }
+            }
+        }
+
+        coverage.update(&grid, std::iter::empty());
+        for (x, y) in [(0, 0), (512, 512), (1023, 1023)] {
+            for team in TeamColor::all() {
+                assert!(!coverage.enemy_protects(x, y, grid.width, team));
+            }
+        }
     }
 }

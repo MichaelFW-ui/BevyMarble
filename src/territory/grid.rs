@@ -211,6 +211,31 @@ impl TerritoryGrid {
             let word_idx = row_base + w;
             let team_bits = self.team_row_bits[(team_id - 1) as usize][word_idx];
             let mut holes = (!team_bits) & mask;
+            let holes_count = holes.count_ones() as u64;
+            if holes_count == 0 {
+                continue;
+            }
+
+            // 预算足够时，整段一次改写：格子字节 + 四队位图。
+            // 预算不足时保留从左到右逐格处理的原有语义。
+            if *budget >= holes_count {
+                let first = (w * 64).max(x0 as usize);
+                let last = (w * 64 + 63).min(x1 as usize);
+                let row_start = y as usize * self.width as usize;
+                self.cells[row_start + first..=row_start + last].fill(team_id);
+                for other in 0..4 {
+                    if other == (team_id - 1) as usize {
+                        self.team_row_bits[other][word_idx] |= mask;
+                    } else {
+                        self.team_row_bits[other][word_idx] &= !mask;
+                    }
+                }
+                self.mark_tile_dirty(first as u32, y);
+                self.mark_tile_dirty(last as u32, y);
+                *budget -= holes_count;
+                painted += holes_count;
+                continue;
+            }
             while holes != 0 && *budget != 0 {
                 let bit = holes.trailing_zeros() as usize;
                 holes &= holes - 1;
@@ -340,5 +365,41 @@ impl TerritoryGrid {
         let x_end = x_start + TILE_SIZE;
         let y_end = y_start + TILE_SIZE;
         (x_start, y_start, x_end, y_end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_span_matches_left_to_right_cell_updates() {
+        for limit in [0, 1, 3, 25, 100] {
+            let mut fast = TerritoryGrid::new(128, 64);
+            let mut reference = TerritoryGrid::new(128, 64);
+            for x in 0..128 {
+                let team = TeamColor::all()[(x % 4) as usize];
+                fast.set(x, 20, Some(team));
+                reference.set(x, 20, Some(team));
+            }
+
+            let mut budget = limit;
+            let painted = fast.paint_span_no_shield(TeamColor::Red, 20, 28, 90, &mut budget);
+            let mut reference_budget = limit;
+            let mut reference_painted = 0;
+            for x in 28..=90 {
+                if reference_budget == 0 {
+                    break;
+                }
+                if reference.get(x, 20) != Some(TeamColor::Red) {
+                    reference.set(x, 20, Some(TeamColor::Red));
+                    reference_budget -= 1;
+                    reference_painted += 1;
+                }
+            }
+            assert_eq!(painted, reference_painted);
+            assert_eq!(budget, reference_budget);
+            assert_eq!(fast.cells(), reference.cells());
+        }
     }
 }

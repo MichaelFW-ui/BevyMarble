@@ -56,28 +56,24 @@ impl Plugin for TerritoryPlugin {
             .add_systems(Startup, (setup_territory_assets, setup_grid_render, setup_initial_game))
             .add_systems(
                 FixedUpdate,
-                clear_pending_despawns,
-            )
-            .add_systems(
-                FixedUpdate,
                 (
-                    // 首先更新碰撞空间索引
-                    update_collision_spatial_index,
+                    clear_pending_despawns,
                     machine_gun_rotate_fire,
-                    update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
-                    ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     bigball_integrate,
                     bullet_integrate,
+                    update_collision_spatial_index,
+                    update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
+                    ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     bullet_hit_terrain,
                     bullet_hit_units_manual,
                     bullet_bullet_collision_manual,
-                    bigball_occupy_territory,
                     bigball_collision,
                     bigball_hit_hq,
+                    bigball_occupy_territory,
                     cleanup_depleted_units,
                     check_victory,
                 )
-                    .after(clear_pending_despawns),
+                    .chain(),
             )
             .add_systems(
                 Update,

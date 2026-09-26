@@ -1,9 +1,3 @@
-mod colors;
-mod events;
-mod pinball;
-pub mod profiler;
-mod territory;
-
 use avian2d::prelude::*;
 use bevy::prelude::*;
 use bevy::camera::{OrthographicProjection, Projection, ScalingMode, Viewport};
@@ -12,10 +6,10 @@ use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}
 use bevy::time::Virtual;
 use std::time::Duration;
 
-use events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
-use pinball::PinballPlugin;
-use profiler::ProfilerPlugin;
-use territory::TerritoryPlugin;
+use bevymarble::events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
+use bevymarble::pinball::{self, PinballPlugin};
+use bevymarble::profiler::ProfilerPlugin;
+use bevymarble::territory::{self, TerritoryPlugin};
 
 fn main() {
     App::new()

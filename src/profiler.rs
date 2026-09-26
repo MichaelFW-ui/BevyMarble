@@ -34,10 +34,13 @@ pub enum ScopeId {
     PinballUpdateMarbleDisplay = 20,
     PinballSyncMarbleTextPosition = 21,
     FixedMainLoop = 22,
+    TerritoryUpdateCollisionSpatialIndex = 23,
+    TerritoryBigballIntegrate = 24,
+    TerritoryBigballHitHq = 25,
 }
 
 impl ScopeId {
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 26;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -64,6 +67,9 @@ impl ScopeId {
             ScopeId::PinballUpdateMarbleDisplay => "pinball/update_marble_display",
             ScopeId::PinballSyncMarbleTextPosition => "pinball/sync_marble_text_position",
             ScopeId::FixedMainLoop => "bevy/fixed_main_loop",
+            ScopeId::TerritoryUpdateCollisionSpatialIndex => "territory/update_collision_spatial_index",
+            ScopeId::TerritoryBigballIntegrate => "territory/bigball_integrate",
+            ScopeId::TerritoryBigballHitHq => "territory/bigball_hit_hq",
         }
     }
 }
@@ -92,6 +98,9 @@ const ALL_SCOPES: [ScopeId; ScopeId::COUNT] = [
     ScopeId::PinballUpdateMarbleDisplay,
     ScopeId::PinballSyncMarbleTextPosition,
     ScopeId::FixedMainLoop,
+    ScopeId::TerritoryUpdateCollisionSpatialIndex,
+    ScopeId::TerritoryBigballIntegrate,
+    ScopeId::TerritoryBigballHitHq,
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -174,6 +183,25 @@ impl Default for Profiler {
 }
 
 impl Profiler {
+    /// 读取并清空累计样本，供无窗口压测按测量区间汇总。
+    pub fn take_scope_samples(&self) -> Vec<(ScopeId, u64, u64, u64)> {
+        ALL_SCOPES.iter().copied().map(|id| {
+            let scope = &self.scopes[id as usize];
+            (
+                id,
+                scope.window_sum_ns.swap(0, Ordering::Relaxed),
+                scope.window_max_ns.swap(0, Ordering::Relaxed),
+                scope.window_calls.swap(0, Ordering::Relaxed),
+            )
+        }).collect()
+    }
+
+    pub fn take_counters(&self) -> Vec<(CounterId, u64)> {
+        ALL_COUNTERS.iter().copied().map(|id| {
+            (id, self.counters[id as usize].swap(0, Ordering::Relaxed))
+        }).collect()
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
