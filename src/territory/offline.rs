@@ -103,6 +103,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
             bullet_hit_terrain,
             bullet_bullet_collision_manual,
             bigball_collision,
+            bigball_hit_shield,
             bigball_hit_hq,
             eliminate_defeated_teams,
             bigball_occupy_territory,

@@ -1543,6 +1543,63 @@ pub fn bigball_collision(
     }
 }
 
+/// 敌方大球先撞上护盾，按体量交换耐久并被挡在护盾外。
+pub fn bigball_hit_shield(
+    profiler: Res<Profiler>,
+    collision_index: Res<CollisionSpatialIndex>,
+    mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
+    mut bigballs: Query<(&mut BigBall, &mut Transform, &mut KinematicVelocity)>,
+    mut shields: Query<&mut Shield>,
+    mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
+) {
+    let _scope = profiler.scope(ScopeId::TerritoryBigballHitShield);
+
+    for (mut ball, mut transform, mut velocity) in bigballs.iter_mut() {
+        if ball.size == 0 { continue; }
+        let mut ball_pos = transform.translation.truncate();
+        for entry in collision_index.query_nearby(ball_pos, bigball_radius(ball.size) + SHIELD_RADIUS) {
+            if entry.kind != CollisionEntityKind::Shield || entry.team == ball.team
+                || pending_despawns.contains(entry.entity) {
+                continue;
+            }
+            let Ok(mut shield) = shields.get_mut(entry.entity) else { continue; };
+            if shield.durability == 0 { continue; }
+
+            let delta = ball_pos - entry.pos;
+            let distance = delta.length();
+            let contact_distance = bigball_radius(ball.size) + shield.radius;
+            if distance >= contact_distance { continue; }
+            let normal = delta.try_normalize()
+                .or_else(|| (-velocity.0).try_normalize())
+                .unwrap_or(Vec2::X);
+
+            // 先把球推出接触区，即使这次撞击耗尽护盾，也不让同一步直接击毁 HQ。
+            ball_pos += normal * (contact_distance - distance + 0.01);
+            transform.translation.x = ball_pos.x;
+            transform.translation.y = ball_pos.y;
+            let inward_speed = velocity.0.dot(normal);
+            if inward_speed < 0.0 {
+                velocity.0 -= normal * (1.9 * inward_speed);
+            }
+
+            let damage = ball.size.min(shield.durability);
+            ball.size -= damage;
+            shield.durability -= damage;
+            if shield.durability == 0 {
+                destroy_unit_once(
+                    &mut pending_despawns,
+                    &mut commands,
+                    &mut destroyed_events,
+                    shield.team,
+                    entry.entity,
+                );
+            }
+            if ball.size == 0 { break; }
+        }
+    }
+}
+
 /// 大球撞击 HQ - 摧毁敌方 HQ
 pub fn bigball_hit_hq(
     profiler: Res<Profiler>,
@@ -1550,6 +1607,7 @@ pub fn bigball_hit_hq(
     mut pending_despawns: ResMut<PendingDespawns>,
     bigballs: Query<(&BigBall, &Transform)>,
     hqs: Query<(Entity, &HQ, &Transform)>,
+    shields: Query<(Entity, &Shield, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBigballHitHq);
@@ -1569,6 +1627,15 @@ pub fn bigball_hit_hq(
             let collision_dist = bigball_radius(ball.size) + HQ_HALF_SIZE;
             
             if dist_sq <= collision_dist * collision_dist {
+                // 完整覆盖 HQ 的己方护盾仍在时，HQ 不承受大球接触。
+                let protected = shields.iter().any(|(shield_entity, shield, shield_transform)| {
+                    shield.team == hq.team && shield.durability > 0
+                        && !pending_despawns.contains(shield_entity)
+                        && shield.radius >= HQ_HALF_SIZE
+                        && shield_transform.translation.truncate().distance_squared(hq_pos)
+                            <= (shield.radius - HQ_HALF_SIZE).powi(2)
+                });
+                if protected { continue; }
                 // 大球撞击敌方 HQ，摧毁 HQ
                 destroy_unit_once(
                     &mut pending_despawns,
@@ -2003,6 +2070,83 @@ mod hq_defeat_tests {
         let mut app = app();
         app.world_mut().spawn((BigBall { team: TeamColor::Red, size: 100 }, Transform::from_xyz(10.0, 0.0, 0.0)));
         app.add_systems(Update, (bigball_hit_hq, eliminate_defeated_teams, check_victory).chain());
+        app.update();
+        assert_eq!(app.world().resource::<GameOver>().winner, Some(TeamColor::Red));
+    }
+
+    #[test]
+    fn active_shield_covers_hq_in_defeat_check() {
+        let mut app = app();
+        app.world_mut().spawn((
+            Shield { team: TeamColor::Blue, durability: 100, radius: SHIELD_RADIUS },
+            Transform::default(),
+        ));
+        app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size: 100 },
+            Transform::default(),
+        ));
+        app.add_systems(Update, (bigball_hit_hq, eliminate_defeated_teams, check_victory).chain());
+
+        app.update();
+        assert!(!app.world().resource::<GameOver>().eliminated[TeamColor::Blue.index()]);
+    }
+
+    #[test]
+    fn shield_absorbs_big_ball_and_preserves_hq() {
+        let mut app = app();
+        let shield = app.world_mut().spawn((
+            Shield { team: TeamColor::Blue, durability: 1000, radius: SHIELD_RADIUS },
+            Transform::default(),
+        )).id();
+        let ball = app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size: 100 },
+            Transform::default(),
+            KinematicVelocity(Vec2::X * 100.0),
+        )).id();
+        app.add_systems(Update, (
+            clear_pending_despawns,
+            update_collision_spatial_index,
+            bigball_hit_shield,
+            bigball_hit_hq,
+            eliminate_defeated_teams,
+            check_victory,
+        ).chain());
+
+        app.update();
+        assert_eq!(app.world().get::<Shield>(shield).unwrap().durability, 900);
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 0);
+        assert!(app.world().get::<Transform>(ball).unwrap().translation.x < -SHIELD_RADIUS);
+        assert!(!app.world().resource::<GameOver>().eliminated[TeamColor::Blue.index()]);
+    }
+
+    #[test]
+    fn depleted_shield_blocks_the_same_impact_but_not_the_next_one() {
+        let mut app = app();
+        let shield = app.world_mut().spawn((
+            Shield { team: TeamColor::Blue, durability: 1000, radius: SHIELD_RADIUS },
+            Transform::default(),
+        )).id();
+        let ball = app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size: 8_000_000 },
+            Transform::default(),
+            KinematicVelocity(Vec2::X * 100.0),
+        )).id();
+        app.add_systems(Update, (
+            clear_pending_despawns,
+            update_collision_spatial_index,
+            bigball_hit_shield,
+            bigball_hit_hq,
+            eliminate_defeated_teams,
+            check_victory,
+        ).chain());
+
+        app.update();
+        assert!(app.world().get_entity(shield).is_err());
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 7_999_000);
+        assert!(app.world().get::<KinematicVelocity>(ball).unwrap().0.x < 0.0);
+        assert!(!app.world().resource::<GameOver>().eliminated[TeamColor::Blue.index()]);
+
+        app.world_mut().get_mut::<Transform>(ball).unwrap().translation.x = 0.0;
         app.update();
         assert_eq!(app.world().resource::<GameOver>().winner, Some(TeamColor::Red));
     }

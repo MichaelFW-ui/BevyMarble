@@ -37,10 +37,11 @@ pub enum ScopeId {
     TerritoryUpdateCollisionSpatialIndex = 23,
     TerritoryBigballIntegrate = 24,
     TerritoryBigballHitHq = 25,
+    TerritoryBigballHitShield = 26,
 }
 
 impl ScopeId {
-    pub const COUNT: usize = 26;
+    pub const COUNT: usize = 27;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -70,6 +71,7 @@ impl ScopeId {
             ScopeId::TerritoryUpdateCollisionSpatialIndex => "territory/update_collision_spatial_index",
             ScopeId::TerritoryBigballIntegrate => "territory/bigball_integrate",
             ScopeId::TerritoryBigballHitHq => "territory/bigball_hit_hq",
+            ScopeId::TerritoryBigballHitShield => "territory/bigball_hit_shield",
         }
     }
 }
@@ -101,6 +103,7 @@ const ALL_SCOPES: [ScopeId; ScopeId::COUNT] = [
     ScopeId::TerritoryUpdateCollisionSpatialIndex,
     ScopeId::TerritoryBigballIntegrate,
     ScopeId::TerritoryBigballHitHq,
+    ScopeId::TerritoryBigballHitShield,
 ];
 
 #[derive(Clone, Copy, Debug)]
