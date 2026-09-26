@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy::time::Fixed;
 use bevy::sprite_render::Material2dPlugin;
-use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
 
 use super::grid::TerritoryGrid;
 use super::render::*;
@@ -40,13 +39,15 @@ impl Default for TerritorySettings {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GameOver {
     pub winner: Option<crate::colors::TeamColor>,
+    pub eliminated: [bool; 4],
+    pub finished: bool,
 }
 
 pub struct TerritoryPlugin;
 
 impl Plugin for TerritoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((Material2dPlugin::<GridMaterial>::default(), TransformInterpolationPlugin::default()))
+        app.add_plugins(Material2dPlugin::<GridMaterial>::default())
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .insert_resource(TerritoryGrid::new(1024, 1024))
             .insert_resource(TerritorySettings::default())
@@ -67,11 +68,12 @@ impl Plugin for TerritoryPlugin {
                     update_collision_spatial_index,
                     update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
-                    bullet_hit_terrain,
                     bullet_hit_units_manual,
+                    bullet_hit_terrain,
                     bullet_bullet_collision_manual,
                     bigball_collision,
                     bigball_hit_hq,
+                    eliminate_defeated_teams,
                     bigball_occupy_territory,
                     cleanup_depleted_units,
                     check_victory,
@@ -85,7 +87,7 @@ impl Plugin for TerritoryPlugin {
                     spawn_units_from_events,
                     update_grid_render,
                     update_bigball_value_text,
-                    handle_victory_event,
+                    show_game_state,
                     handle_unit_destroyed_event,
                 ),
             )

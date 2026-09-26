@@ -578,6 +578,7 @@ pub fn spawn_units_from_events(
     ui_assets: Res<TerritoryUiAssets>,
     grid: Res<TerritoryGrid>,
     settings: Res<TerritorySettings>,
+    game_over: Res<GameOver>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritorySpawnUnitsFromEvents);
     let profiling = profiler.is_enabled();
@@ -595,6 +596,7 @@ pub fn spawn_units_from_events(
             if start_y == 0 { 50.0 } else { -50.0 },
         );
         let spawn_logic = corner_logic + offset;
+        if game_over.eliminated[event.team.index()] || game_over.finished { continue; }
 
         match event.action_type {
             ActionType::BigBall => {
@@ -985,6 +987,7 @@ pub fn bullet_hit_terrain(
     let mut kernel_points_est = 0u64;
     let kernel_points = kernel.points_est;
     for (entity, mut bullet, transform, mut last_pos) in bullets.iter_mut() {
+        if pending_despawns.contains(entity) { continue; }
         let current_logic = transform.translation.truncate();
         let _team_id = bullet.team.to_id();
 
@@ -1059,11 +1062,10 @@ fn segment_circle_t(a: Vec2, b: Vec2, c: Vec2, r: f32) -> Option<f32> {
     let d = b - a;
     let f = a - c;
     let a0 = d.dot(d);
-    if a0 <= 1e-8 {
-        return None;
-    }
-    let b0 = 2.0 * f.dot(d);
     let c0 = f.dot(f) - r * r;
+    if c0 <= 0.0 { return Some(0.0); }
+    if a0 <= 1e-8 { return None; }
+    let b0 = 2.0 * f.dot(d);
     let disc = b0 * b0 - 4.0 * a0 * c0;
     if disc < 0.0 {
         return None;
@@ -1102,6 +1104,7 @@ pub fn bullet_hit_units_manual(
     let max_query_radius = BIGBALL_MAX_RADIUS.max(SHIELD_RADIUS) + BULLET_RADIUS;
 
     for (bullet_entity, bullet, transform, prev) in bullets.iter() {
+        if pending_despawns.contains(bullet_entity) { continue; }
         let a = prev.0;
         let b = transform.translation.truncate();
         let mut best: Option<(f32, Entity, HitKind)> = None;
@@ -1109,7 +1112,8 @@ pub fn bullet_hit_units_manual(
         // 使用空间索引查询线段路径上的实体
         for entry in collision_index.query_segment(a, b, max_query_radius) {
             // 跳过同队和子弹类型
-            if entry.team == bullet.team || entry.kind == CollisionEntityKind::Bullet {
+            if entry.team == bullet.team || entry.kind == CollisionEntityKind::Bullet
+                || pending_despawns.contains(entry.entity) {
                 continue;
             }
 
@@ -1370,17 +1374,27 @@ pub fn bigball_occupy_territory(
                     let dx_max = ((radius * radius - dy * dy) as f32).sqrt() as i32;
                     let y = cy + dy;
                     if y < 0 || y >= grid.height as i32 { continue; }
-                    for dx in -dx_max..=dx_max {
-                        if ball.size == 0 { break 'path; }
-                        let x = cx + dx;
-                        if x >= 0 && x < grid.width as i32
-                            && !shield_coverage.enemy_protects(x as u32, y as u32, grid.width, ball.team)
-                            && grid.occupy(x as u32, y as u32, ball.team, &[])
-                        {
-                            ball.size -= 1;
-                            if profiling { occupied_cells += 1; }
+                    let start = (cx - dx_max).max(0) as u32;
+                    let end = (cx + dx_max).min(grid.width as i32 - 1) as u32;
+                    if start > end || grid.row_all_team(ball.team.to_id(), y as u32, start, end) {
+                        continue;
+                    }
+                    // 护盾把一行切成若干可占领区间；位图批量染色保持从左到右消耗数值。
+                    let mut x = start;
+                    while x <= end && ball.size > 0 {
+                        while x <= end && shield_coverage.enemy_protects(x, y as u32, grid.width, ball.team) {
+                            x += 1;
+                        }
+                        let span_start = x;
+                        while x <= end && !shield_coverage.enemy_protects(x, y as u32, grid.width, ball.team) {
+                            x += 1;
+                        }
+                        if span_start < x {
+                            let painted = grid.paint_span_no_shield(ball.team, y as u32, span_start, x - 1, &mut ball.size);
+                            if profiling { occupied_cells += painted; }
                         }
                     }
+                    if ball.size == 0 { break 'path; }
                 }
             }
         }
@@ -1543,11 +1557,12 @@ pub fn bigball_hit_hq(
     let _scope = profiler.scope(ScopeId::TerritoryBigballHitHq);
     
     for (ball, ball_transform) in bigballs.iter() {
+        if ball.size == 0 { continue; }
         let ball_pos = ball_transform.translation.truncate();
         
         for (hq_entity, hq, hq_transform) in hqs.iter() {
             // 跳过己方 HQ
-            if hq.team == ball.team {
+            if hq.team == ball.team || pending_despawns.contains(hq_entity) {
                 continue;
             }
             
@@ -1599,46 +1614,50 @@ pub fn cleanup_depleted_units(
     }
 }
 
-/// 检测胜利 - 当只剩一支队伍有单位时，该队获胜
+/// HQ 被摧毁后，该队立即出局，现存单位和弹丸一并清理。
+pub fn eliminate_defeated_teams(
+    mut commands: Commands,
+    mut pending: ResMut<PendingDespawns>,
+    mut game_over: ResMut<GameOver>,
+    hqs: Query<(Entity, &HQ)>,
+    units: Query<(Entity, &TerritoryUnit)>,
+    bullets: Query<(Entity, &Bullet)>,
+) {
+    let mut alive = [false; 4];
+    for (entity, hq) in hqs.iter() {
+        if !pending.contains(entity) { alive[hq.team.index()] = true; }
+    }
+    for team in TeamColor::all() {
+        let index = team.index();
+        if !alive[index] && !game_over.eliminated[index] {
+            game_over.eliminated[index] = true;
+        }
+    }
+    for (entity, unit) in units.iter() {
+        if game_over.eliminated[unit.team.index()] {
+            despawn_once(&mut pending, &mut commands, entity);
+        }
+    }
+    for (entity, bullet) in bullets.iter() {
+        if game_over.eliminated[bullet.team.index()] {
+            despawn_once(&mut pending, &mut commands, entity);
+        }
+    }
+}
+
+/// 所有对手的 HQ 出局后宣布胜者；全部同时出局时判平局。
 pub fn check_victory(
     profiler: Res<Profiler>,
-    units: Query<&TerritoryUnit>,
     mut game_over: ResMut<GameOver>,
     mut victory_events: MessageWriter<VictoryEvent>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryCheckVictory);
-    
-    // 如果游戏已结束，不再检测
-    if game_over.winner.is_some() {
-        return;
-    }
-    
-    let mut team_counts = [0u32; 4];
-
-    for unit in units.iter() {
-        team_counts[unit.team.index()] += 1;
-    }
-
-    let mut alive_count = 0usize;
-    let mut last_alive: Option<TeamColor> = None;
-    for (i, count) in team_counts.iter().enumerate() {
-        if *count > 0 {
-            alive_count += 1;
-            last_alive = match i {
-                0 => Some(TeamColor::Red),
-                1 => Some(TeamColor::Blue),
-                2 => Some(TeamColor::Green),
-                3 => Some(TeamColor::Yellow),
-                _ => None,
-            };
-            if alive_count > 1 {
-                break;
-            }
-        }
-    }
-
-    if alive_count == 1 {
-        if let Some(winner) = last_alive {
+    if game_over.finished { return; }
+    let survivors: Vec<_> = TeamColor::all().into_iter()
+        .filter(|team| !game_over.eliminated[team.index()]).collect();
+    if survivors.len() <= 1 {
+        game_over.finished = true;
+        if let Some(&winner) = survivors.first() {
             game_over.winner = Some(winner);
             victory_events.write(VictoryEvent { winner });
         }
@@ -1695,15 +1714,61 @@ pub fn update_bigball_value_text(
     }
 }
 
-/// 处理胜利事件 - 暂停游戏并显示获胜信息
-pub fn handle_victory_event(
-    mut events: MessageReader<VictoryEvent>,
+#[derive(Default)]
+pub struct ShownGameState {
+    eliminated: [bool; 4],
+    finished: bool,
+}
+
+/// 在战场上显示出局和结局，并在对局结束时暂停模拟。
+pub fn show_game_state(
+    mut commands: Commands,
+    game_over: Res<GameOver>,
+    grid: Res<TerritoryGrid>,
+    ui_assets: Res<TerritoryUiAssets>,
     mut time: ResMut<Time<Virtual>>,
+    mut shown: Local<ShownGameState>,
 ) {
-    for event in events.read() {
-        info!("🎉 Victory! Team {:?} wins!", event.winner);
-        // 暂停虚拟时间，停止游戏逻辑
+    for team in TeamColor::all() {
+        let i = team.index();
+        if !game_over.eliminated[i] || shown.eliminated[i] { continue; }
+        shown.eliminated[i] = true;
+        let (x, y) = team.start_corner();
+        let corner = grid.grid_to_logic(x, y);
+        let position = corner + Vec2::new(if x == 0 { 50.0 } else { -50.0 }, if y == 0 { 50.0 } else { -50.0 });
+        let name = team_name(team);
+        commands.spawn((
+            RenderLayers::layer(1),
+            Text2d::new(format!("{name} ELIMINATED")),
+            TextFont { font: ui_assets.ui_font.clone(), font_size: 22.0, ..default() },
+            TextColor(team.to_color()),
+            Transform::from_translation((position + Vec2::Y * 30.0).extend(5.0)),
+        ));
+    }
+    if game_over.finished && !shown.finished {
+        shown.finished = true;
         time.pause();
+        let message = match game_over.winner {
+            Some(team) => format!("{} WINS", team_name(team)),
+            None => "DRAW".to_string(),
+        };
+        info!("{message}");
+        commands.spawn((
+            RenderLayers::layer(1),
+            Text2d::new(message),
+            TextFont { font: ui_assets.ui_font.clone(), font_size: 54.0, ..default() },
+            TextColor(Color::WHITE),
+            Transform::from_xyz(0.0, 0.0, 10.0),
+        ));
+    }
+}
+
+fn team_name(team: TeamColor) -> &'static str {
+    match team {
+        TeamColor::Red => "RED",
+        TeamColor::Blue => "BLUE",
+        TeamColor::Green => "GREEN",
+        TeamColor::Yellow => "YELLOW",
     }
 }
 
@@ -1775,5 +1840,61 @@ mod bigball_radius_tests {
     fn grows_and_caps_at_quarter_battle_width() {
         assert!(bigball_radius(10_000) > bigball_radius(100));
         assert_eq!(bigball_radius(u64::MAX) * 2.0, TERRITORY_LOGIC_WIDTH / 4.0);
+    }
+}
+
+#[cfg(test)]
+mod hq_defeat_tests {
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .init_resource::<GameOver>()
+            .init_resource::<PendingDespawns>()
+            .init_resource::<CollisionSpatialIndex>()
+            .init_resource::<BulletPaintKernel>()
+            .insert_resource(TerritoryGrid::new(1024, 1024))
+            .add_message::<VictoryEvent>()
+            .add_message::<UnitDestroyedEvent>();
+        app.world_mut().spawn((HQ { team: TeamColor::Red }, TerritoryUnit { team: TeamColor::Red }, Transform::from_xyz(100.0, 0.0, 0.0)));
+        app.world_mut().spawn((HQ { team: TeamColor::Blue }, TerritoryUnit { team: TeamColor::Blue }, Transform::from_xyz(0.0, 0.0, 0.0)));
+        app
+    }
+
+    #[test]
+    fn bullet_hit_eliminates_hq_team_even_with_other_units_alive() {
+        let mut app = app();
+        let blue_unit = app.world_mut().spawn((TerritoryUnit { team: TeamColor::Blue }, Transform::from_xyz(200.0, 0.0, 0.0))).id();
+        app.world_mut().spawn((
+            Bullet { team: TeamColor::Red, value: 1 },
+            BulletPrevPosition(Vec2::new(-30.0, 0.0)),
+            LastLogicPosition(Vec2::new(-30.0, 0.0)),
+            Transform::from_xyz(30.0, 0.0, 0.0),
+        ));
+        app.add_systems(Update, (
+            update_collision_spatial_index,
+            bullet_hit_units_manual,
+            bullet_hit_terrain,
+            eliminate_defeated_teams,
+            check_victory,
+        ).chain());
+        app.update();
+        let result = app.world().resource::<GameOver>();
+        assert_eq!(result.winner, Some(TeamColor::Red));
+        assert!(result.finished);
+        assert!(result.eliminated[TeamColor::Blue.index()]);
+        assert!(app.world().get_entity(blue_unit).is_err());
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(512, 512), None);
+    }
+
+    #[test]
+    fn big_ball_contact_eliminates_hq_team() {
+        let mut app = app();
+        app.world_mut().spawn((BigBall { team: TeamColor::Red, size: 100 }, Transform::from_xyz(10.0, 0.0, 0.0)));
+        app.add_systems(Update, (bigball_hit_hq, eliminate_defeated_teams, check_victory).chain());
+        app.update();
+        assert_eq!(app.world().resource::<GameOver>().winner, Some(TeamColor::Red));
     }
 }
