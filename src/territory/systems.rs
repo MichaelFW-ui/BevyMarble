@@ -1471,6 +1471,7 @@ pub fn bigball_collision(
 
     // 第一阶段：收集所有碰撞对
     for (e1, ball1, t1, _) in bigballs.iter() {
+        if ball1.size == 0 { continue; }
         let p1 = t1.translation.truncate();
         let r1 = bigball_radius(ball1.size);
         for entry in collision_index.query_nearby(p1, r1 + BIGBALL_MAX_RADIUS) {
@@ -1502,27 +1503,35 @@ pub fn bigball_collision(
         else {
             continue;
         };
+        if ball1.size == 0 || ball2.size == 0 { continue; }
 
         let current_delta = t2.translation.truncate() - t1.translation.truncate();
         let dist = current_delta.length();
-        let n = if dist > 1e-4 { current_delta / dist } else { Vec2::X };
+        let relative_velocity = v1.0 - v2.0;
+        let n = if dist > 1e-4 {
+            current_delta / dist
+        } else {
+            relative_velocity.try_normalize().unwrap_or(Vec2::X)
+        };
         let penetration = bigball_radius(ball1.size) + bigball_radius(ball2.size) - dist;
         if penetration <= 0.0 { continue; }
-        let corr = n * (penetration * 0.5);
-        t1.translation.x -= corr.x;
-        t1.translation.y -= corr.y;
-        t2.translation.x += corr.x;
-        t2.translation.y += corr.y;
+        let m1 = ball1.size as f64;
+        let m2 = ball2.size as f64;
+        let mass_sum = m1 + m2;
+        let share1 = (m2 / mass_sum) as f32;
+        let share2 = (m1 / mass_sum) as f32;
+        let correction = n * penetration;
+        t1.translation.x -= correction.x * share1;
+        t1.translation.y -= correction.y * share1;
+        t2.translation.x += correction.x * share2;
+        t2.translation.y += correction.y * share2;
 
-        let m1 = (ball1.size.min(1000) as f32).max(1.0);
-        let m2 = (ball2.size.min(1000) as f32).max(1.0);
-        let rel = v1.0 - v2.0;
-        let rel_n = rel.dot(n);
+        let rel_n = relative_velocity.dot(n);
         if rel_n > 0.0 {
             let restitution = 0.9;
-            let impulse = n * ((1.0 + restitution) * rel_n / (1.0 / m1 + 1.0 / m2));
-            v1.0 -= impulse / m1;
-            v2.0 += impulse / m2;
+            let velocity_change = n * ((1.0 + restitution) * rel_n);
+            v1.0 -= velocity_change * share1;
+            v2.0 += velocity_change * share2;
         }
 
         if ball1.team != ball2.team {
@@ -1939,6 +1948,49 @@ mod bigball_collision_tests {
         let world = app.world();
         assert_eq!(world.get::<BigBall>(e1).unwrap().size, 90);
         assert_eq!(world.get::<BigBall>(e2).unwrap().size, 90);
+    }
+
+    #[test]
+    fn fifty_thousand_ball_cannot_reverse_eight_million_ball() {
+        for (small_team, large_team) in [
+            (TeamColor::Red, TeamColor::Red),
+            (TeamColor::Red, TeamColor::Blue),
+        ] {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .init_resource::<Profiler>()
+                .init_resource::<CollisionSpatialIndex>()
+                .add_systems(Update, (update_collision_spatial_index, bigball_collision).chain());
+            let small = app.world_mut().spawn((
+                BigBall { team: small_team, size: 50_000 },
+                Transform::from_xyz(-160.0, 30.0, 0.0),
+                KinematicVelocity(Vec2::new(100.0, 0.0)),
+            )).id();
+            let large = app.world_mut().spawn((
+                BigBall { team: large_team, size: 8_000_000 },
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                KinematicVelocity(Vec2::new(-100.0, 0.0)),
+            )).id();
+
+            app.update();
+            let world = app.world();
+            let small_velocity = world.get::<KinematicVelocity>(small).unwrap().0.x;
+            let large_velocity = world.get::<KinematicVelocity>(large).unwrap().0;
+            assert!(small_velocity < -100.0, "small ball should bounce: {small_velocity}");
+            assert!(large_velocity.x < -95.0, "large ball reversed or slowed too much: {large_velocity}");
+            assert!(large_velocity.normalize().dot(Vec2::NEG_X) > 0.99);
+            let small_displacement = world.get::<Transform>(small).unwrap().translation.x + 160.0;
+            let large_displacement = world.get::<Transform>(large).unwrap().translation.x;
+            assert!(large_displacement.abs() * 100.0 < small_displacement.abs());
+
+            if small_team == large_team {
+                assert_eq!(world.get::<BigBall>(small).unwrap().size, 50_000);
+                assert_eq!(world.get::<BigBall>(large).unwrap().size, 8_000_000);
+            } else {
+                assert_eq!(world.get::<BigBall>(small).unwrap().size, 0);
+                assert_eq!(world.get::<BigBall>(large).unwrap().size, 7_995_000);
+            }
+        }
     }
 }
 
