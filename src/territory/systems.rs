@@ -1819,6 +1819,117 @@ mod shield_coverage_tests {
 }
 
 #[cfg(test)]
+mod shield_behavior_tests {
+    use super::*;
+
+    #[test]
+    fn shield_action_spawns_at_its_team_hq() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .insert_resource(TerritoryGrid::new(1024, 1024))
+            .insert_resource(TerritorySettings::default())
+            .init_resource::<GameOver>()
+            .insert_resource(TerritoryRenderAssets {
+                bullet_mesh: Handle::default(),
+                bigball_mesh: Handle::default(),
+                shield_mesh: Handle::default(),
+                machine_gun_mesh: Handle::default(),
+                ciws_mesh: Handle::default(),
+                team_materials: std::array::from_fn(|_| Handle::default()),
+                shield_materials: std::array::from_fn(|_| Handle::default()),
+            })
+            .insert_resource(TerritoryUiAssets { ui_font: Handle::default() })
+            .add_message::<ActionEvent>()
+            .add_systems(Update, spawn_units_from_events);
+        app.world_mut().resource_mut::<Messages<ActionEvent>>().write(ActionEvent {
+            team: TeamColor::Blue,
+            action_type: ActionType::Shield,
+            value: 1234,
+        });
+
+        app.update();
+        let mut shields = app.world_mut().query::<(&Shield, &LogicPosition)>();
+        let spawned: Vec<_> = shields.iter(app.world()).collect();
+        assert_eq!(spawned.len(), 1);
+        assert_eq!(spawned[0].0.team, TeamColor::Blue);
+        assert_eq!(spawned[0].0.durability, 1234);
+        assert_eq!(spawned[0].1.0, Vec2::new(461.5, 461.5));
+    }
+
+    #[test]
+    fn shield_absorbs_enemy_bullets_before_hq_until_depleted() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .init_resource::<PendingDespawns>()
+            .init_resource::<CollisionSpatialIndex>()
+            .add_message::<UnitDestroyedEvent>()
+            .add_systems(Update, (
+                clear_pending_despawns,
+                update_collision_spatial_index,
+                bullet_hit_units_manual,
+            ).chain());
+        let shield = app.world_mut().spawn((
+            Shield { team: TeamColor::Blue, durability: 2, radius: SHIELD_RADIUS },
+            Transform::default(),
+        )).id();
+        let hq = app.world_mut().spawn((
+            HQ { team: TeamColor::Blue },
+            Transform::default(),
+        )).id();
+
+        let fire = |app: &mut App| {
+            app.world_mut().spawn((
+                Bullet { team: TeamColor::Red, value: 1 },
+                BulletPrevPosition(Vec2::new(-100.0, 0.0)),
+                Transform::from_xyz(100.0, 0.0, 0.0),
+            ));
+            app.update();
+        };
+
+        fire(&mut app);
+        assert_eq!(app.world().get::<Shield>(shield).unwrap().durability, 1);
+        assert!(app.world().get_entity(hq).is_ok());
+
+        fire(&mut app);
+        assert!(app.world().get_entity(shield).is_err());
+        assert!(app.world().get_entity(hq).is_ok());
+
+        fire(&mut app);
+        assert!(app.world().get_entity(hq).is_err());
+    }
+
+    #[test]
+    fn shield_prevents_enemy_paint_and_removal_restores_painting() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .insert_resource(TerritoryGrid::new(1024, 1024))
+            .add_systems(Update, bigball_occupy_territory);
+        let shield = app.world_mut().spawn((
+            Shield { team: TeamColor::Blue, durability: 1000, radius: SHIELD_RADIUS },
+            LogicPosition(Vec2::ZERO),
+        )).id();
+        app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size: 200_000 },
+            Transform::default(),
+            LogicPosition(Vec2::ZERO),
+            LastLogicPosition(Vec2::ZERO),
+        ));
+
+        app.update();
+        let grid = app.world().resource::<TerritoryGrid>();
+        assert_ne!(grid.get(512, 512), Some(TeamColor::Red));
+        assert_eq!(grid.get(567, 512), Some(TeamColor::Red));
+
+        app.world_mut().despawn(shield);
+        app.update();
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(512, 512), Some(TeamColor::Red));
+    }
+}
+
+#[cfg(test)]
 mod ciws_intercept_tests {
     use super::*;
 
