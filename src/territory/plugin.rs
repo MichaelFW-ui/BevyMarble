@@ -1,6 +1,8 @@
 use bevy::prelude::*;
-use bevy::time::Fixed;
+use bevy::render::extract_resource::ExtractResourcePlugin;
+use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::sprite_render::Material2dPlugin;
+use bevy::time::Fixed;
 
 use super::grid::TerritoryGrid;
 use super::render::*;
@@ -48,6 +50,7 @@ pub struct TerritoryPlugin;
 impl Plugin for TerritoryPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<GridMaterial>::default())
+            .add_plugins(ExtractResourcePlugin::<GridUpload>::default())
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .insert_resource(TerritoryGrid::new(1024, 1024))
             .insert_resource(TerritorySettings::default())
@@ -92,5 +95,8 @@ impl Plugin for TerritoryPlugin {
                 ),
             )
             .add_systems(PostUpdate, sync_bullet_rotation_to_velocity);
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(Render, upload_grid_texture.in_set(RenderSystems::Prepare));
+        }
     }
 }
