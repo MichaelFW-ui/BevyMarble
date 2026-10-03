@@ -915,6 +915,7 @@ fn inspector(ui: &mut egui::Ui, state: &mut EditorState) {
                         }
                     });
                 ui.label("每个队伍保留一个启用的出生点。");
+                ui.label("四队出生点共同定义随机投放范围。");
             }
         }
     } else {

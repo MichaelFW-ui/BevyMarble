@@ -2,6 +2,7 @@ use avian2d::prelude::*;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use std::collections::HashMap;
 
 use super::components::*;
@@ -15,6 +16,69 @@ use crate::territory::GameOver;
 const STUCK_TIME_SECS: f32 = 1.5;
 const STUCK_MOVE_EPS: f32 = 0.8;
 const STUCK_SPEED_EPS: f32 = 5.0;
+const SPAWN_POSITION_ATTEMPTS: usize = 32;
+
+/// 所有出生点共同定义投放范围，每个队伍使用相同的位置分布。
+#[derive(Clone, Copy)]
+struct MarbleSpawnArea {
+    min: Vec2,
+    max: Vec2,
+}
+
+impl MarbleSpawnArea {
+    fn from_positions(positions: impl IntoIterator<Item = Vec2>) -> Option<Self> {
+        let mut positions = positions.into_iter();
+        let first = positions.next()?;
+        Some(positions.fold(
+            Self {
+                min: first,
+                max: first,
+            },
+            |area, pos| Self {
+                min: area.min.min(pos),
+                max: area.max.max(pos),
+            },
+        ))
+    }
+
+    fn sample(&self, profile: &PinballProfile, value: u64, rng: &mut impl Rng) -> Vec2 {
+        let radius = calculate_radius(value);
+        let limit =
+            (Vec2::new(profile.width, profile.height) / 2.0 - Vec2::splat(radius)).max(Vec2::ZERO);
+        let min = self.min.clamp(-limit, limit);
+        let max = self.max.clamp(-limit, limit);
+        Vec2::new(rng.gen_range(min.x..=max.x), rng.gen_range(min.y..=max.y))
+    }
+
+    fn sample_separated(
+        &self,
+        profile: &PinballProfile,
+        occupied: &[Vec2],
+        rng: &mut impl Rng,
+    ) -> Vec2 {
+        let clearance = |pos: Vec2| {
+            occupied
+                .iter()
+                .map(|&other| pos.distance_squared(other))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let min_distance = calculate_radius(profile.marble.initial_value) * 2.0;
+        let mut best = self.sample(profile, profile.marble.initial_value, rng);
+        let mut best_clearance = clearance(best);
+        for _ in 0..SPAWN_POSITION_ATTEMPTS {
+            if best_clearance >= min_distance * min_distance {
+                break;
+            }
+            let candidate = self.sample(profile, profile.marble.initial_value, rng);
+            let candidate_clearance = clearance(candidate);
+            if candidate_clearance > best_clearance {
+                best = candidate;
+                best_clearance = candidate_clearance;
+            }
+        }
+        best
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct CircleMeshCache {
@@ -44,21 +108,36 @@ pub fn spawn_initial_marbles(
     profile: Res<PinballProfile>,
     game_over: Option<Res<GameOver>>,
 ) {
-    for (spawn_point, transform) in spawn_points.iter() {
-        if game_over
-            .as_ref()
-            .is_some_and(|state| state.eliminated[spawn_point.team.index()])
-        {
-            continue;
-        }
-        let material = materials.add(spawn_point.team.to_color());
+    let Some(area) = MarbleSpawnArea::from_positions(
+        spawn_points
+            .iter()
+            .map(|(_, transform)| transform.translation.truncate()),
+    ) else {
+        return;
+    };
+    let mut teams: Vec<_> = spawn_points
+        .iter()
+        .map(|(point, _)| point.team)
+        .filter(|team| {
+            !game_over
+                .as_ref()
+                .is_some_and(|state| state.eliminated[team.index()])
+        })
+        .collect();
+    let mut rng = rand::thread_rng();
+    teams.shuffle(&mut rng);
+    let mut occupied = Vec::with_capacity(teams.len());
+    for team in teams {
+        let position = area.sample_separated(&profile, &occupied, &mut rng);
+        occupied.push(position);
+        let material = materials.add(team.to_color());
         spawn_marble(
             &mut commands,
             &mut *meshes,
             &mut mesh_cache,
             material,
-            spawn_point.team,
-            transform.translation.truncate(),
+            team,
+            position,
             &asset_server,
             &profile.marble,
         );
@@ -196,6 +275,12 @@ pub fn check_multiplier_collision(
     let _scope = profiler.scope(ScopeId::PinballCheckMultiplierCollision);
     let profiling = profiler.is_enabled();
     let mut read_events = 0u64;
+    let spawn_area = MarbleSpawnArea::from_positions(
+        spawn_points
+            .iter()
+            .map(|(_, transform)| transform.translation.truncate()),
+    );
+    let mut rng = rand::thread_rng();
     for event in collision_started.read() {
         if profiling {
             read_events += 1;
@@ -222,14 +307,10 @@ pub fn check_multiplier_collision(
                 continue;
             }
 
-            // 找到对应颜色的起始点并重置位置
-            for (spawn_point, spawn_transform) in spawn_points.iter() {
-                if spawn_point.team == marble.team {
-                    transform.translation = spawn_transform.translation;
-                    // 重置速度
-                    velocity.0 = spawn_velocity(&profile.marble);
-                    break;
-                }
+            if let Some(area) = spawn_area {
+                let position = area.sample(&profile, marble.value, &mut rng);
+                transform.translation = position.extend(transform.translation.z);
+                velocity.0 = spawn_velocity(&profile.marble);
             }
         }
     }
@@ -249,6 +330,12 @@ pub fn check_action_zone_collision(
     let _scope = profiler.scope(ScopeId::PinballCheckActionZoneCollision);
     let profiling = profiler.is_enabled();
     let mut read_events = 0u64;
+    let spawn_area = MarbleSpawnArea::from_positions(
+        spawn_points
+            .iter()
+            .map(|(_, transform)| transform.translation.truncate()),
+    );
+    let mut rng = rand::thread_rng();
     for event in collision_started.read() {
         if profiling {
             read_events += 1;
@@ -289,14 +376,10 @@ pub fn check_action_zone_collision(
                 continue;
             }
 
-            // 找到对应颜色的起始点并重置位置
-            for (spawn_point, spawn_transform) in spawn_points.iter() {
-                if spawn_point.team == marble.team {
-                    transform.translation = spawn_transform.translation;
-                    // 重置速度
-                    velocity.0 = spawn_velocity(&profile.marble);
-                    break;
-                }
+            if let Some(area) = spawn_area {
+                let position = area.sample(&profile, marble.value, &mut rng);
+                transform.translation = position.extend(transform.translation.z);
+                velocity.0 = spawn_velocity(&profile.marble);
             }
         }
     }
@@ -315,6 +398,12 @@ pub fn contain_marbles(
     let max_x = profile.width / 2.0;
     let min_y = -profile.height / 2.0;
     let max_y = profile.height / 2.0;
+    let spawn_area = MarbleSpawnArea::from_positions(
+        spawn_points
+            .iter()
+            .map(|(_, transform)| transform.translation.truncate()),
+    );
+    let mut rng = rand::thread_rng();
 
     for (marble, mut transform, mut velocity) in marbles.iter_mut() {
         let pos = transform.translation;
@@ -325,12 +414,10 @@ pub fn contain_marbles(
             || pos.y < min_y - 50.0
             || pos.y > max_y + 50.0
         {
-            for (spawn_point, spawn_transform) in spawn_points.iter() {
-                if spawn_point.team == marble.team {
-                    transform.translation = spawn_transform.translation;
-                    velocity.0 = spawn_velocity(&profile.marble);
-                    break;
-                }
+            if let Some(area) = spawn_area {
+                let position = area.sample(&profile, marble.value, &mut rng);
+                transform.translation = position.extend(transform.translation.z);
+                velocity.0 = spawn_velocity(&profile.marble);
             }
         }
     }
@@ -417,6 +504,40 @@ pub fn check_boost_collision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    fn shared_spawn_area_covers_both_sides_and_keeps_marbles_inside_the_profile() {
+        let profile = PinballProfile::default();
+        let area = MarbleSpawnArea::from_positions([
+            Vec2::new(-60.0, 350.0),
+            Vec2::new(-20.0, 350.0),
+            Vec2::new(20.0, 350.0),
+            Vec2::new(60.0, 350.0),
+        ])
+        .unwrap();
+        let mut rng = StdRng::seed_from_u64(20261003);
+        let mut sum_x = 0.0;
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        for _ in 0..4096 {
+            let pos = area.sample(&profile, profile.marble.initial_value, &mut rng);
+            assert!((-60.0..=60.0).contains(&pos.x));
+            assert_eq!(pos.y, 350.0);
+            sum_x += pos.x;
+            min_x = min_x.min(pos.x);
+            max_x = max_x.max(pos.x);
+        }
+        assert!(min_x < -55.0 && max_x > 55.0);
+        assert!((sum_x / 4096.0).abs() < 2.0);
+        let edge_area =
+            MarbleSpawnArea::from_positions([Vec2::new(-200.0, 400.0), Vec2::new(200.0, 400.0)])
+                .unwrap();
+        for _ in 0..128 {
+            let pos = edge_area.sample(&profile, super::super::utils::MAX_VALUE, &mut rng);
+            assert!(pos.x.abs() <= 185.0 && pos.y <= 385.0);
+        }
+    }
 
     fn collision_app() -> (App, Entity, Entity) {
         let mut app = App::new();
@@ -578,9 +699,11 @@ mod tests {
         app.update();
         assert!(app.world().get_entity(eliminated_marble).is_err());
         assert_eq!(app.world().get::<Marble>(survivor).unwrap().value, 77);
+        let position = app.world().get::<Transform>(survivor).unwrap().translation;
+        assert!((-60.0..=60.0).contains(&position.x));
         assert_eq!(
-            app.world().get::<Transform>(survivor).unwrap().translation,
-            app.world().get::<Transform>(spawn).unwrap().translation
+            position.y,
+            app.world().get::<Transform>(spawn).unwrap().translation.y
         );
         let messages = app.world().resource::<Messages<ActionEvent>>();
         let mut cursor = messages.get_cursor();
@@ -615,5 +738,60 @@ mod tests {
             app.world().get::<Transform>(marble).unwrap().translation,
             app.world().get::<Transform>(spawn).unwrap().translation
         );
+    }
+
+    #[test]
+    fn multiplier_action_and_out_of_bounds_resets_use_the_shared_spawn_area() {
+        let (mut app, marble, _) = collision_app();
+        app.add_systems(Update, contain_marbles.after(check_boost_collision));
+        for (team, x) in [
+            (TeamColor::Blue, -20.0),
+            (TeamColor::Green, 20.0),
+            (TeamColor::Yellow, 60.0),
+        ] {
+            app.world_mut().spawn((
+                PinballSpawnPoint { team },
+                Transform::from_xyz(x, 350.0, 0.5),
+            ));
+        }
+        let multiplier = app
+            .world_mut()
+            .spawn(MultiplierZone {
+                multiplier: 1,
+                reset_position: true,
+            })
+            .id();
+        let action = app
+            .world_mut()
+            .spawn(ActionZone {
+                action_type: ActionZoneType::BigBall,
+                value_scale: 1.0,
+                reset_position: true,
+            })
+            .id();
+        for reset in 0..3 {
+            let mut left = false;
+            let mut right = false;
+            for _ in 0..64 {
+                match reset {
+                    0 => collide(&mut app, marble, multiplier),
+                    1 => collide(&mut app, marble, action),
+                    _ => {
+                        app.world_mut()
+                            .get_mut::<Transform>(marble)
+                            .unwrap()
+                            .translation
+                            .x = 1000.0;
+                        app.update();
+                    }
+                }
+                let position = app.world().get::<Transform>(marble).unwrap().translation;
+                assert!((-60.0..=60.0).contains(&position.x));
+                assert_eq!(position.y, 350.0);
+                left |= position.x < 0.0;
+                right |= position.x > 0.0;
+            }
+            assert!(left && right, "重置路径 {reset} 未在左右两侧投放弹珠");
+        }
     }
 }
