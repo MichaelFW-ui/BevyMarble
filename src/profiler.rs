@@ -384,26 +384,12 @@ fn position_overlay(
             break;
         }
     }
-    let Some((camera, projection, camera_transform)) = selected else {
+    let Some((_, projection, camera_transform)) = selected else {
         return;
     };
 
-    let viewport_aspect = camera
-        .viewport
-        .as_ref()
-        .map(|vp| vp.physical_size.x as f32 / vp.physical_size.y as f32)
-        .unwrap_or(1.0);
-
     let (view_w, view_h) = match projection {
-        Projection::Orthographic(ortho) => match ortho.scaling_mode {
-            bevy::camera::ScalingMode::FixedVertical { viewport_height } => {
-                (viewport_height * viewport_aspect, viewport_height)
-            }
-            bevy::camera::ScalingMode::FixedHorizontal { viewport_width } => {
-                (viewport_width, viewport_width / viewport_aspect.max(1e-6))
-            }
-            _ => (crate::pinball::PINBALL_WIDTH, crate::pinball::PINBALL_HEIGHT),
-        },
+        Projection::Orthographic(ortho) => (ortho.area.width(), ortho.area.height()),
         _ => (crate::pinball::PINBALL_WIDTH, crate::pinball::PINBALL_HEIGHT),
     };
 
