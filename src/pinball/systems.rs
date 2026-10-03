@@ -10,6 +10,7 @@ use super::utils::{calculate_radius, format_value};
 use crate::colors::TeamColor;
 use crate::events::{ActionEvent, ActionType};
 use crate::profiler::{CounterId, Profiler, ScopeId};
+use crate::territory::GameOver;
 
 const STUCK_TIME_SECS: f32 = 1.5;
 const STUCK_MOVE_EPS: f32 = 0.8;
@@ -41,8 +42,15 @@ pub fn spawn_initial_marbles(
     spawn_points: Query<(&PinballSpawnPoint, &Transform)>,
     asset_server: Res<AssetServer>,
     profile: Res<PinballProfile>,
+    game_over: Option<Res<GameOver>>,
 ) {
     for (spawn_point, transform) in spawn_points.iter() {
+        if game_over
+            .as_ref()
+            .is_some_and(|state| state.eliminated[spawn_point.team.index()])
+        {
+            continue;
+        }
         let material = materials.add(spawn_point.team.to_color());
         spawn_marble(
             &mut commands,
@@ -54,6 +62,30 @@ pub fn spawn_initial_marbles(
             &asset_server,
             &profile.marble,
         );
+    }
+}
+
+/// 队伍出局后清理弹珠及数值文字，在碰撞处理与重置前执行。
+pub fn cleanup_eliminated_marbles(
+    mut commands: Commands,
+    game_over: Option<Res<GameOver>>,
+    marbles: Query<(Entity, &Marble)>,
+    texts: Query<(Entity, &MarbleText)>,
+) {
+    let Some(game_over) = game_over else {
+        return;
+    };
+    for (entity, marble) in &marbles {
+        if game_over.eliminated[marble.team.index()] {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (entity, text) in &texts {
+        if marbles.get(text.marble_entity).map_or(true, |(_, marble)| {
+            game_over.eliminated[marble.team.index()]
+        }) {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -396,6 +428,7 @@ mod tests {
             .add_systems(
                 Update,
                 (
+                    cleanup_eliminated_marbles,
                     check_multiplier_collision,
                     check_action_zone_collision,
                     check_boost_collision,
@@ -498,6 +531,63 @@ mod tests {
             app.world().get::<LinearVelocity>(marble).unwrap().0,
             Vec2::ZERO
         );
+    }
+
+    #[test]
+    fn elimination_removes_marble_before_queued_actions_and_keeps_survivors_active() {
+        let (mut app, eliminated_marble, _) = collision_app();
+        let mut game_over = GameOver::default();
+        game_over.eliminated[TeamColor::Red.index()] = true;
+        app.insert_resource(game_over);
+        let survivor = app
+            .world_mut()
+            .spawn((
+                Marble {
+                    team: TeamColor::Blue,
+                    value: 1000,
+                },
+                Transform::from_xyz(10.0, 20.0, 0.5),
+                LinearVelocity(Vec2::ZERO),
+            ))
+            .id();
+        let spawn = app
+            .world_mut()
+            .spawn((
+                PinballSpawnPoint {
+                    team: TeamColor::Blue,
+                },
+                Transform::from_xyz(60.0, 350.0, 0.5),
+            ))
+            .id();
+        let zone = app
+            .world_mut()
+            .spawn(ActionZone {
+                action_type: ActionZoneType::Shield,
+                value_scale: 2.5,
+                reset_position: true,
+            })
+            .id();
+        for marble in [eliminated_marble, survivor] {
+            app.world_mut().write_message(CollisionStart {
+                collider1: marble,
+                collider2: zone,
+                body1: Some(marble),
+                body2: None,
+            });
+        }
+        app.update();
+        assert!(app.world().get_entity(eliminated_marble).is_err());
+        assert_eq!(app.world().get::<Marble>(survivor).unwrap().value, 77);
+        assert_eq!(
+            app.world().get::<Transform>(survivor).unwrap().translation,
+            app.world().get::<Transform>(spawn).unwrap().translation
+        );
+        let messages = app.world().resource::<Messages<ActionEvent>>();
+        let mut cursor = messages.get_cursor();
+        let actions: Vec<_> = cursor.read(messages).collect();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].team, TeamColor::Blue);
+        assert_eq!(actions[0].value, 2500);
     }
 
     #[test]

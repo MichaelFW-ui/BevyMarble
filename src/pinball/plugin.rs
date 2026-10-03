@@ -53,28 +53,33 @@ impl Plugin for PinballPlugin {
             .add_systems(
                 Update,
                 (
-                    check_multiplier_collision,
-                    check_action_zone_collision,
-                    check_boost_collision,
-                    contain_marbles,
-                    assist_stuck_marbles,
-                    update_marble_display,
-                    sync_marble_text_position,
+                    cleanup_eliminated_marbles,
+                    (
+                        check_multiplier_collision,
+                        check_action_zone_collision,
+                        check_boost_collision,
+                        contain_marbles,
+                        assist_stuck_marbles,
+                        update_marble_display,
+                        sync_marble_text_position,
+                    )
+                        .run_if(simulation_running),
                 )
-                    .run_if(simulation_running),
+                    .chain(),
             );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::components::{Marble, PinballSpawnPoint};
+    use super::super::components::{Marble, MarbleText, PinballSpawnPoint};
     use super::*;
+    use crate::colors::TeamColor;
     use crate::events::ActionEvent;
     use crate::profiler::Profiler;
+    use crate::territory::GameOver;
 
-    #[test]
-    fn preview_rebuilds_shared_layout_without_accumulating_entities() {
+    fn pinball_app() -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -90,6 +95,52 @@ mod tests {
         .insert_resource(PinballSimulation(false))
         .add_message::<ActionEvent>()
         .add_plugins(PinballPlugin);
+        app
+    }
+
+    #[test]
+    fn eliminated_team_marbles_and_text_are_cleared_and_skipped_when_rebuilding() {
+        let mut app = pinball_app();
+        app.init_resource::<GameOver>();
+        app.update();
+        let world = app.world_mut();
+        let eliminated_marble = world
+            .query::<(Entity, &Marble)>()
+            .iter(world)
+            .find(|(_, marble)| marble.team == TeamColor::Red)
+            .unwrap()
+            .0;
+        let eliminated_text = world
+            .query::<(Entity, &MarbleText)>()
+            .iter(world)
+            .find(|(_, text)| text.marble_entity == eliminated_marble)
+            .unwrap()
+            .0;
+        world.resource_mut::<GameOver>().eliminated[TeamColor::Red.index()] = true;
+        app.update();
+        assert!(app.world().get_entity(eliminated_marble).is_err());
+        assert!(app.world().get_entity(eliminated_text).is_err());
+        for rebuild in [false, true] {
+            if rebuild {
+                restart_pinball(app.world_mut());
+            }
+            let world = app.world_mut();
+            let teams: Vec<_> = world
+                .query::<&Marble>()
+                .iter(world)
+                .map(|marble| marble.team)
+                .collect();
+            assert_eq!(teams.len(), 3);
+            for team in [TeamColor::Blue, TeamColor::Green, TeamColor::Yellow] {
+                assert!(teams.contains(&team));
+            }
+            assert_eq!(world.query::<&MarbleText>().iter(world).count(), 3);
+        }
+    }
+
+    #[test]
+    fn preview_rebuilds_shared_layout_without_accumulating_entities() {
+        let mut app = pinball_app();
         app.update();
         for _ in 0..3 {
             restart_pinball(app.world_mut());
