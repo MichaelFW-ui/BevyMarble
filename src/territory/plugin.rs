@@ -101,6 +101,7 @@ impl Plugin for TerritoryPlugin {
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .insert_resource(TerritoryGrid::new(1024, 1024))
             .insert_resource(TerritorySettings::default())
+            .init_resource::<super::ciws::CiwsConfig>()
             .init_resource::<GameOver>()
             .init_resource::<BulletPaintKernel>()
             .init_resource::<TargetSpatialIndex>()
@@ -114,7 +115,7 @@ impl Plugin for TerritoryPlugin {
                     clear_pending_despawns,
                     machine_gun_rotate_fire,
                     bigball_integrate,
-                    bullet_integrate,
+                    (bullet_integrate, decay_ciws_projectiles).chain(),
                     sync_bullet_rotation_to_velocity,
                     update_collision_spatial_index,
                     update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),

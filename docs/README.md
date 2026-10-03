@@ -5,6 +5,7 @@
 ## 架构与实现
 
 - [设计文档](architecture/design.md)：框架、模块划分、数据流及扩展位置。
+- [近防炮数值与冲量](architecture/ciws-defense.md)：弹丸数值、距离衰减配置、染色与命中结算，以及专用冲量和 2M 防御验证。
 
 ## 学习资料
 

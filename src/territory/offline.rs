@@ -81,6 +81,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 64.0)))
         .insert_resource(TerritoryGrid::new(1024, 1024))
         .insert_resource(TerritorySettings::default())
+        .init_resource::<super::ciws::CiwsConfig>()
         .init_resource::<GameOver>()
         .init_resource::<Profiler>()
         .init_resource::<BulletPaintKernel>()
@@ -95,7 +96,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
             clear_pending_despawns,
             machine_gun_rotate_fire,
             bigball_integrate,
-            bullet_integrate,
+            (bullet_integrate, decay_ciws_projectiles).chain(),
             sync_bullet_rotation_to_velocity,
             update_collision_spatial_index,
             update_target_spatial_index,
@@ -202,7 +203,7 @@ fn populate(world: &mut World, config: Scenario, rng: &mut StdRng) {
         let team = TeamColor::all()[i % 4];
         let pos = random_pos(rng);
         world.spawn((
-            CIWS { team, bullets: 10_000_000, fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating) },
+            CIWS { team, bullets: 10_000_000, fire_timer: Timer::from_seconds(super::ciws::FIRE_INTERVAL, TimerMode::Repeating) },
             TerritoryUnit { team }, Transform::from_translation(pos.extend(0.9)),
         ));
     }
@@ -264,7 +265,7 @@ fn replenish_scene(world: &mut World, config: Scenario, rng: &mut StdRng) {
         let team = TeamColor::all()[i % 4];
         let pos = random_pos(rng);
         world.spawn((
-            CIWS { team, bullets: 10_000_000, fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating) },
+            CIWS { team, bullets: 10_000_000, fire_timer: Timer::from_seconds(super::ciws::FIRE_INTERVAL, TimerMode::Repeating) },
             TerritoryUnit { team }, Transform::from_translation(pos.extend(0.9)),
         ));
     }

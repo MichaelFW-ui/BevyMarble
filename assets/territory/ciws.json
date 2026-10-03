@@ -1,0 +1,6 @@
+{
+  "max_range_battle_widths": 0.7,
+  "retained_value_at_max_range": 0.2,
+  "falloff_exponent": 1.0,
+  "impulse_per_value": 60.0
+}

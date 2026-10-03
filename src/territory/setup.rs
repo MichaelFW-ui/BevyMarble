@@ -108,7 +108,7 @@ fn spawn_initial_ciws(
         CIWS {
             team,
             bullets: 10_000_000, // 初始10M子弹
-            fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+            fire_timer: Timer::from_seconds(super::ciws::FIRE_INTERVAL, TimerMode::Repeating),
         },
         TerritoryUnit { team },
         RenderLayers::layer(1),

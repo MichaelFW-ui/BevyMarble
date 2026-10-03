@@ -48,6 +48,13 @@ pub struct Bullet {
     pub value: u64, // 子弹数值，默认1
 }
 
+/// CIWS 专用弹丸：按累计飞行路程衰减，以剩余数值产生冲量。
+#[derive(Component, Debug, Clone, Default)]
+pub struct CiwsProjectile {
+    pub distance_traveled: f64,
+    pub decay_remainder: f64,
+}
+
 /// Territory 侧使用自定义运动学：速度（逻辑单位/秒）
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct KinematicVelocity(pub Vec2);

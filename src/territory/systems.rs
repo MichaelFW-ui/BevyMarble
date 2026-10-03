@@ -11,6 +11,7 @@ use crate::pinball::format_value;
 use crate::profiler::{CounterId, Profiler, ScopeId};
 use crate::territory::{CiwsDistanceMetric, GameOver, TerritorySettings};
 use super::components::*;
+use super::ciws;
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use super::grid::TerritoryGrid;
 
@@ -383,7 +384,7 @@ impl TargetSpatialIndex {
         (left, bottom, left + self.cell_size, bottom + self.cell_size)
     }
 
-    fn nearest_enemy(&self, origin: Vec2, team: TeamColor, metric: CiwsDistanceMetric) -> Option<TargetEntry> {
+    fn nearest_enemy(&self, origin: Vec2, team: TeamColor, metric: CiwsDistanceMetric, max_distance: f64) -> Option<TargetEntry> {
         let (cx, cy) = self.cell_of(origin)?;
 
         let mut best: Option<(u64, f32, TargetEntry)> = None; // (entity_bits, score, target)
@@ -400,7 +401,7 @@ impl TargetSpatialIndex {
             let visit_cell = |x: i32, y: i32, best: &mut Option<(u64, f32, TargetEntry)>| {
                 let idx = self.bucket_index(x, y);
                 for entry in &self.buckets[idx] {
-                    if entry.team == team {
+                    if entry.team == team || origin.distance_squared(entry.pos) as f64 > max_distance * max_distance {
                         continue;
                     }
                     let bits = entry.entity.to_bits();
@@ -479,8 +480,8 @@ pub fn update_target_spatial_index(
     profiler: Res<Profiler>,
     mut index: ResMut<TargetSpatialIndex>,
     settings: Res<TerritorySettings>,
-    bigballs: Query<(Entity, &TerritoryUnit, &Transform, &KinematicVelocity), With<BigBall>>,
-    bullets: Query<(Entity, &Bullet, &Transform, &KinematicVelocity), With<Bullet>>,
+    bigballs: Query<(Entity, &TerritoryUnit, &Transform, &KinematicVelocity), (With<BigBall>, Without<HQ>)>,
+    bullets: Query<(Entity, &Bullet, &Transform, &KinematicVelocity), Without<HQ>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateTargetSpatialIndex);
     index.clear_active();
@@ -732,7 +733,7 @@ fn spawn_ciws(
         CIWS {
             team,
             bullets,
-            fire_timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+            fire_timer: Timer::from_seconds(ciws::FIRE_INTERVAL, TimerMode::Repeating),
         },
         TerritoryUnit { team },
         RenderLayers::layer(1),
@@ -814,7 +815,7 @@ fn intercept_direction(origin: Vec2, target: Vec2, velocity: Vec2, speed: f32) -
         .try_normalize().unwrap_or(Vec2::X)
 }
 
-/// 近防炮瞄准最近敌人射击
+/// 近防炮瞄准射程内的最近移动威胁。
 pub fn ciws_target_fire(
     profiler: Res<Profiler>,
     mut commands: Commands,
@@ -823,6 +824,9 @@ pub fn ciws_target_fire(
     target_index: Res<TargetSpatialIndex>,
     render_assets: Res<TerritoryRenderAssets>,
     settings: Res<TerritorySettings>,
+    config: Res<ciws::CiwsConfig>,
+    target_balls: Query<&BigBall, Without<HQ>>,
+    target_bullets: Query<&Bullet, Without<HQ>>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryCiwsTargetFire);
     for (mut ciws, ciws_transform) in ciws_query.iter_mut() {
@@ -833,12 +837,53 @@ pub fn ciws_target_fire(
         }
 
         let ciws_pos = ciws_transform.translation.truncate();
-        if let Some(target) = target_index.nearest_enemy(ciws_pos, ciws.team, settings.ciws_distance_metric) {
-            // 合并子弹：消耗最多 BULLET_MERGE_RATIO 颗，发射 1 颗高 value 子弹
-            let bullets_to_consume = BULLET_MERGE_RATIO.min(ciws.bullets);
-            ciws.bullets -= bullets_to_consume;
+        if let Some(target) = target_index.nearest_enemy(ciws_pos, ciws.team, settings.ciws_distance_metric, config.max_range()) {
+            let requested_value = if let Ok(ball) = target_balls.get(target.entity) {
+                ciws::shot_value(ball.size)
+            } else if let Ok(bullet) = target_bullets.get(target.entity) {
+                bullet.value.min(ciws::MAX_SHOT_VALUE)
+            } else {
+                continue;
+            };
+            let value = requested_value.min(ciws.bullets);
+            if value == 0 { continue; }
+            ciws.bullets -= value;
             let direction = intercept_direction(ciws_pos, target.pos, target.velocity, BULLET_SPEED);
-            spawn_bullet(&mut commands, &render_assets, ciws.team, bullets_to_consume, ciws_pos, direction);
+            let projectile = spawn_bullet(&mut commands, &render_assets, ciws.team, value, ciws_pos, direction);
+            commands.entity(projectile).insert(CiwsProjectile::default());
+        }
+    }
+}
+
+/// 按实际累计路程衰减拦截弹数值，并截断最后一段飞行至射程边缘。
+pub fn decay_ciws_projectiles(
+    config: Res<ciws::CiwsConfig>,
+    mut commands: Commands,
+    mut pending_despawns: ResMut<PendingDespawns>,
+    mut projectiles: Query<(Entity, &mut Bullet, &mut CiwsProjectile, &BulletPrevPosition, &mut Transform)>,
+) {
+    let max_range = config.max_range();
+    for (entity, mut bullet, mut projectile, prev, mut transform) in &mut projectiles {
+        if pending_despawns.contains(entity) { continue; }
+        let before = projectile.distance_traveled;
+        if before >= max_range {
+            bullet.value = 0;
+            despawn_once(&mut pending_despawns, &mut commands, entity);
+            continue;
+        }
+        let delta = transform.translation.truncate() - prev.0;
+        let distance = delta.length() as f64;
+        if distance <= 0.0 { continue; }
+        let after = (before + distance).min(max_range);
+        if before + distance > max_range {
+            let pos = prev.0 + delta * ((max_range - before) / distance) as f32;
+            transform.translation.x = pos.x;
+            transform.translation.y = pos.y;
+        }
+        bullet.value = config.decay_value(bullet.value, before, after, &mut projectile.decay_remainder);
+        projectile.distance_traveled = after;
+        if bullet.value == 0 {
+            despawn_once(&mut pending_despawns, &mut commands, entity);
         }
     }
 }
@@ -850,7 +895,7 @@ fn spawn_bullet(
     value: u64,
     position: Vec2,
     direction: Vec2,
-) {
+) -> Entity {
     let velocity = direction * BULLET_SPEED;
     let angle = direction.y.atan2(direction.x);
 
@@ -868,7 +913,7 @@ fn spawn_bullet(
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(1.5)).with_rotation(Quat::from_rotation_z(angle)),
-    ));
+    )).id()
 }
 
 /// 积分子弹（FixedUpdate）：边界反射 + 最低速度保证 + 记录上一位置用于连续碰撞检测
@@ -1081,11 +1126,12 @@ fn segment_circle_t(a: Vec2, b: Vec2, c: Vec2, r: f32) -> Option<f32> {
 /// 子弹击中单位（FixedUpdate，使用空间索引优化连续碰撞检测）
 pub fn bullet_hit_units_manual(
     profiler: Res<Profiler>,
+    config: Option<Res<ciws::CiwsConfig>>,
     mut commands: Commands,
     mut pending_despawns: ResMut<PendingDespawns>,
     collision_index: Res<CollisionSpatialIndex>,
-    bullets: Query<(Entity, &Bullet, &Transform, &BulletPrevPosition)>,
-    mut bigballs: Query<(Entity, &mut BigBall, &Transform)>,
+    bullets: Query<(Entity, &Bullet, &Transform, &BulletPrevPosition, Option<&CiwsProjectile>)>,
+    mut bigballs: Query<(Entity, &mut BigBall, &Transform, Option<&mut KinematicVelocity>)>,
     mut shields: Query<(Entity, &mut Shield, &Transform)>,
     hqs: Query<(Entity, &HQ, &Transform)>,
     mut destroyed_events: MessageWriter<UnitDestroyedEvent>,
@@ -1095,7 +1141,7 @@ pub fn bullet_hit_units_manual(
     // 使用本步索引中实际存在的最大半径，保留所有可能命中目标。
     let max_query_radius = collision_index.max_target_radius + BULLET_RADIUS;
 
-    for (bullet_entity, bullet, transform, prev) in bullets.iter() {
+    for (bullet_entity, bullet, transform, prev, ciws_projectile) in bullets.iter() {
         if pending_despawns.contains(bullet_entity) { continue; }
         let a = prev.0;
         let b = transform.translation.truncate();
@@ -1105,6 +1151,7 @@ pub fn bullet_hit_units_manual(
         for entry in collision_index.query_segment(a, b, max_query_radius) {
             // 跳过同队和子弹类型
             if entry.team == bullet.team || entry.kind == CollisionEntityKind::Bullet
+                || (ciws_projectile.is_some() && entry.kind == CollisionEntityKind::Hq)
                 || pending_despawns.contains(entry.entity) {
                 continue;
             }
@@ -1165,12 +1212,20 @@ pub fn bullet_hit_units_manual(
                 }
             }
             HitKind::BigBall => {
-                if let Ok((_e, mut ball, _t)) = bigballs.get_mut(target) {
+                if let Ok((_e, mut ball, _t, velocity)) = bigballs.get_mut(target) {
                     let damage = bullet.value.min(ball.size);
+                    if ciws_projectile.is_some() && let Some(mut velocity) = velocity {
+                        let direction = (b - a).try_normalize()
+                            .unwrap_or_else(|| (transform.rotation * Vec3::X).truncate());
+                        velocity.0 = ciws::impact_velocity(
+                            config.as_deref().expect("CIWS 弹丸需要加载数值配置"),
+                            velocity.0, direction, ball.size, damage,
+                        );
+                    }
                     ball.size -= damage;
                 }
                 despawn_once(&mut pending_despawns, &mut commands, bullet_entity);
-                if let Ok((_e, ball, _t)) = bigballs.get(target) {
+                if let Ok((_e, ball, _t, _velocity)) = bigballs.get(target) {
                     if ball.size == 0 {
                         destroy_unit_once(
                             &mut pending_despawns,
@@ -2014,6 +2069,424 @@ mod ciws_intercept_tests {
         assert!(direction.y > 0.0);
         let time = 100.0 / (direction.x * 250.0);
         assert!((direction * 250.0 * time - (Vec2::new(100.0, 0.0) + Vec2::new(0.0, 100.0) * time)).length() < 0.001);
+    }
+}
+
+#[cfg(test)]
+mod ciws_defense_tests {
+    use super::*;
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+
+    fn render_assets() -> TerritoryRenderAssets {
+        TerritoryRenderAssets {
+            bullet_mesh: Handle::default(),
+            bigball_mesh: Handle::default(),
+            shield_mesh: Handle::default(),
+            machine_gun_mesh: Handle::default(),
+            ciws_mesh: Handle::default(),
+            team_materials: std::array::from_fn(|_| Handle::default()),
+            shield_materials: std::array::from_fn(|_| Handle::default()),
+        }
+    }
+
+    fn defense_app(size: u64, distance: f32, offset: f32, corner: bool) -> (App, Entity, Entity, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Time::<bevy::time::Fixed>::from_hz(60.0))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
+            .init_resource::<Profiler>()
+            .init_resource::<PendingDespawns>()
+            .init_resource::<CollisionSpatialIndex>()
+            .init_resource::<TargetSpatialIndex>()
+            .init_resource::<BulletPaintKernel>()
+            .insert_resource(TerritoryGrid::new(1024, 1024))
+            .insert_resource(TerritorySettings::default())
+            .init_resource::<ciws::CiwsConfig>()
+            .insert_resource(render_assets())
+            .add_message::<UnitDestroyedEvent>()
+            .add_systems(FixedUpdate, (
+                clear_pending_despawns,
+                bigball_integrate,
+                (bullet_integrate, decay_ciws_projectiles).chain(),
+                sync_bullet_rotation_to_velocity,
+                update_collision_spatial_index,
+                update_target_spatial_index,
+                ciws_target_fire,
+                bullet_hit_units_manual,
+                bigball_hit_hq,
+                cleanup_depleted_units,
+            ).chain());
+        let origin = if corner { Vec2::splat(-461.5) } else { Vec2::ZERO };
+        let radial = if corner { Vec2::ONE.normalize() } else { Vec2::X };
+        let tangent = Vec2::new(-radial.y, radial.x);
+        let pos = origin + radial * distance + tangent * offset;
+        let ball = app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size },
+            TerritoryUnit { team: TeamColor::Red },
+            KinematicVelocity(-radial * BIGBALL_SPEED),
+            Transform::from_translation(pos.extend(1.0)),
+        )).id();
+        let hq = app.world_mut().spawn((HQ { team: TeamColor::Blue }, Transform::from_translation(origin.extend(2.0)))).id();
+        let cannon = app.world_mut().spawn((
+            CIWS { team: TeamColor::Blue, bullets: 10_000_000, fire_timer: Timer::from_seconds(ciws::FIRE_INTERVAL, TimerMode::Repeating) },
+            Transform::from_translation(origin.extend(0.9)),
+        )).id();
+        (app, ball, hq, cannon)
+    }
+
+    fn ciws_values(app: &mut App) -> Vec<u64> {
+        let world = app.world_mut();
+        let mut values: Vec<_> = world.query_filtered::<&Bullet, With<CiwsProjectile>>()
+            .iter(world).map(|bullet| bullet.value).collect();
+        values.sort_unstable();
+        values
+    }
+
+    #[test]
+    fn ciws_firing_transfers_value_from_reserve_and_follows_current_target_mass() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().retained_value_at_max_range = 1.0;
+        for _ in 0..30 {
+            app.update();
+            if !ciws_values(&mut app).is_empty() { break; }
+        }
+        assert_eq!(ciws_values(&mut app), [125_000]);
+        assert_eq!(app.world().get::<CIWS>(cannon).unwrap().bullets, 10_000_000 - 125_000);
+
+        app.world_mut().get_mut::<BigBall>(ball).unwrap().size = 500_000;
+        for _ in 0..30 {
+            app.update();
+            if ciws_values(&mut app).len() == 2 { break; }
+        }
+        assert_eq!(ciws_values(&mut app), [75_000, 125_000]);
+        assert_eq!(app.world().get::<CIWS>(cannon).unwrap().bullets, 10_000_000 - 200_000);
+    }
+
+    #[test]
+    fn ciws_firing_uses_only_the_value_available_in_reserve() {
+        let (mut app, _, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().get_mut::<CIWS>(cannon).unwrap().bullets = 50_000;
+        for _ in 0..30 {
+            app.update();
+            if app.world().get_entity(cannon).is_err() { break; }
+        }
+        assert!(app.world().get_entity(cannon).is_err());
+        assert_eq!(ciws_values(&mut app), [50_000]);
+    }
+
+    #[test]
+    fn fired_ciws_value_paints_continuously_and_spends_one_point_per_cell() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        // 单独测量染色消耗，此场景的距离保留比例设为 1。
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().retained_value_at_max_range = 1.0;
+        for _ in 0..30 {
+            app.update();
+            if !ciws_values(&mut app).is_empty() { break; }
+        }
+        assert_eq!(ciws_values(&mut app), [125_000]);
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        app.add_systems(FixedUpdate, bullet_hit_terrain.after(bullet_hit_units_manual).before(bigball_hit_hq));
+        let blue_cells = |grid: &TerritoryGrid| grid.count_territory(TeamColor::Blue) as u64;
+        let before = blue_cells(app.world().resource::<TerritoryGrid>());
+        for _ in 0..60 { app.update(); }
+        let painted = blue_cells(app.world().resource::<TerritoryGrid>()) - before;
+        let values = ciws_values(&mut app);
+        assert_eq!(values.len(), 1);
+        assert!(painted > 1_000, "近防炮弹丸未持续染色：{painted}");
+        assert_eq!(125_000 - values[0], painted);
+        println!("125K 近防炮弹丸飞行 1 秒：染色 {painted} 格，剩余数值 {}", values[0]);
+    }
+
+    #[test]
+    fn single_ciws_defends_two_million_ball_at_normal_speed_from_half_field() {
+        // 实际角落 HQ，遍历炮塔冷却相位，完整运行索敌、提前量、飞行与命中。
+        for (distance, phase) in [512.0].into_iter()
+            .flat_map(|distance| [0.0, 0.1, 0.2, 0.29].map(|phase| (distance, phase))) {
+            let (mut app, ball, hq, cannon) = defense_app(2_000_000, distance, 0.0, true);
+            app.world_mut().get_mut::<CIWS>(cannon).unwrap().fire_timer.set_elapsed(Duration::from_secs_f32(phase));
+            for _ in 0..600 {
+                app.update();
+                assert!(app.world().get_entity(hq).is_ok(), "2M 大球击毁总部，距离 {distance}，冷却相位 {phase}");
+                if app.world().get_entity(ball).is_err() { break; }
+            }
+            assert!(app.world().get_entity(ball).is_err(), "2M 大球未被拦截，距离 {distance}，冷却相位 {phase}");
+            let elapsed = app.world().resource::<Time<bevy::time::Fixed>>().elapsed_secs();
+            let consumed = 10_000_000 - app.world().get::<CIWS>(cannon).unwrap().bullets;
+            println!("2M 拦截：距离 {distance}，速度 100，冷却相位 {phase:.2}，用时 {elapsed:.3}s，耗用数值 {consumed}");
+        }
+    }
+
+    #[test]
+    fn larger_head_on_ball_is_damaged_and_slowed_without_reversing() {
+        let (mut app, ball, hq, _) = defense_app(8_000_000, 512.0, 0.0, true);
+        let initial_forward = -Vec2::ONE.normalize();
+        let mut was_hit = false;
+        for _ in 0..600 {
+            app.update();
+            let Some(current) = app.world().get::<BigBall>(ball) else { break; };
+            let velocity = app.world().get::<KinematicVelocity>(ball).unwrap().0;
+            assert!(velocity.dot(initial_forward) > 0.0, "8M 大球被打得完全倒退");
+            if current.size < 8_000_000 {
+                was_hit = true;
+                assert!(velocity.length() < BIGBALL_SPEED);
+            }
+            if app.world().get_entity(hq).is_err() {
+                println!("8M 正面来袭：剩余 {}，速度 {:.2}，触及总部用时 {:.3}s", current.size, velocity.length(), app.world().resource::<Time<bevy::time::Fixed>>().elapsed_secs());
+                break;
+            }
+        }
+        assert!(was_hit, "8M 大球未受到拦截火力");
+        if app.world().get_entity(ball).is_err() {
+            println!("8M 正面来袭被耗尽，用时 {:.3}s", app.world().resource::<Time<bevy::time::Fixed>>().elapsed_secs());
+        }
+    }
+
+    #[test]
+    fn very_heavy_ball_keeps_advancing_with_partial_damage_and_deceleration() {
+        let (mut app, ball, hq, _) = defense_app(32_000_000, 512.0, 0.0, true);
+        for _ in 0..600 {
+            app.update();
+            assert!(app.world().get_entity(ball).is_ok());
+            let velocity = app.world().get::<KinematicVelocity>(ball).unwrap().0;
+            assert!(velocity.dot(-Vec2::ONE.normalize()) > 0.0);
+            if app.world().get_entity(hq).is_err() { break; }
+        }
+        assert!(app.world().get_entity(hq).is_err());
+        let size = app.world().get::<BigBall>(ball).unwrap().size;
+        let speed = app.world().get::<KinematicVelocity>(ball).unwrap().0.length();
+        assert!(size < 32_000_000 && size > 0);
+        assert!(speed < BIGBALL_SPEED && speed > 0.0);
+        println!("32M 正面来袭：剩余 {size}，速度 {speed:.2}，触及总部用时 {:.3}s", app.world().resource::<Time<bevy::time::Fixed>>().elapsed_secs());
+    }
+
+    #[test]
+    fn glancing_large_ball_gains_clearance_from_ciws_impacts() {
+        let (mut app, ball, hq, _) = defense_app(8_000_000, 400.0, 135.0, false);
+        let mut max_clearance = 135.0_f32;
+        let mut min_distance = f32::MAX;
+        for _ in 0..300 {
+            app.update();
+            assert!(app.world().get_entity(hq).is_ok(), "斜向来袭的 8M 大球击毁总部");
+            let Some(_) = app.world().get::<BigBall>(ball) else { break; };
+            let pos = app.world().get::<Transform>(ball).unwrap().translation.truncate();
+            let velocity = app.world().get::<KinematicVelocity>(ball).unwrap().0;
+            min_distance = min_distance.min(pos.length());
+            if velocity.x < 0.0 {
+                let clearance = pos.perp_dot(velocity).abs() / velocity.length();
+                max_clearance = max_clearance.max(clearance);
+            }
+            if pos.x < 0.0 { break; }
+        }
+        assert!(max_clearance > 143.0, "偏转不足以避开总部：{max_clearance}");
+        println!("8M 斜向来袭：原路径距总部 135，偏转后路径距离最大 {max_clearance:.2}，实际最近距离 {min_distance:.2}");
+    }
+
+    #[test]
+    fn ordinary_bullets_keep_their_damage_and_leave_velocity_unchanged() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().despawn(cannon);
+        app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 100 },
+            BulletPrevPosition(Vec2::new(260.0, 0.0)),
+            KinematicVelocity(Vec2::X * BULLET_SPEED),
+            Transform::from_xyz(270.0, 0.0, 1.5),
+        ));
+        for _ in 0..3 { app.update(); }
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 1_999_900);
+        assert_eq!(app.world().get::<KinematicVelocity>(ball).unwrap().0, Vec2::NEG_X * BIGBALL_SPEED);
+    }
+
+    #[test]
+    fn ciws_impact_consumes_exact_remaining_value_when_target_mass_changes() {
+        let (mut app, ball, _, cannon) = defense_app(1_000_000, 400.0, 0.0, false);
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().retained_value_at_max_range = 1.0;
+        app.world_mut().despawn(cannon);
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 95_711 },
+            CiwsProjectile::default(),
+            BulletPrevPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::X * BULLET_SPEED),
+            Transform::default(),
+        )).id();
+        for _ in 0..10 { app.update(); }
+        assert_eq!(app.world().get::<Bullet>(projectile).unwrap().value, 95_711);
+        app.world_mut().get_mut::<BigBall>(ball).unwrap().size = 500_000;
+        for _ in 0..180 {
+            app.update();
+            if app.world().get_entity(projectile).is_err() { break; }
+        }
+        assert!(app.world().get_entity(projectile).is_err());
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 500_000 - 95_711);
+    }
+
+    #[test]
+    fn missed_ciws_projectiles_expire_after_their_maximum_flight_distance() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 125_000 },
+            CiwsProjectile::default(),
+            BulletPrevPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::default(),
+        )).id();
+        for _ in 0..60 { app.update(); }
+        assert!(app.world().get_entity(projectile).is_ok());
+        for _ in 0..240 { app.update(); }
+        assert!(app.world().get_entity(projectile).is_err());
+    }
+
+    #[test]
+    fn ciws_keeps_reserve_when_only_an_enemy_hq_is_present() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().despawn(ball);
+        let enemy_hq = app.world_mut().spawn((
+            HQ { team: TeamColor::Red }, TerritoryUnit { team: TeamColor::Red },
+            Transform::from_xyz(100.0, 0.0, 2.0),
+        )).id();
+        for _ in 0..90 { app.update(); }
+        assert!(app.world().get_entity(enemy_hq).is_ok());
+        assert_eq!(app.world().get::<CIWS>(cannon).unwrap().bullets, 10_000_000);
+        assert!(ciws_values(&mut app).is_empty());
+    }
+
+    #[test]
+    fn ciws_round_passes_an_enemy_hq_paints_and_hits_the_ball_behind_it() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().get_mut::<CIWS>(cannon).unwrap().bullets = 125_000;
+        app.add_systems(FixedUpdate, bullet_hit_terrain.after(bullet_hit_units_manual).before(bigball_hit_hq));
+        let enemy_hq = app.world_mut().spawn((
+            HQ { team: TeamColor::Red }, TerritoryUnit { team: TeamColor::Red },
+            Transform::from_xyz(100.0, 0.0, 2.0),
+        )).id();
+        for _ in 0..90 {
+            app.update();
+            assert!(app.world().get_entity(enemy_hq).is_ok(), "近防炮弹丸摧毁了总部");
+        }
+        assert!(app.world().get::<BigBall>(ball).unwrap().size < 2_000_000);
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(612, 512), Some(TeamColor::Blue));
+    }
+
+    #[test]
+    fn ciws_fires_when_a_stationary_target_enters_the_configured_range() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 800.0, 0.0, true);
+        app.world_mut().get_mut::<KinematicVelocity>(ball).unwrap().0 = Vec2::ZERO;
+        for _ in 0..60 { app.update(); }
+        assert_eq!(app.world().get::<CIWS>(cannon).unwrap().bullets, 10_000_000);
+        assert!(ciws_values(&mut app).is_empty());
+        let origin = app.world().get::<Transform>(cannon).unwrap().translation.truncate();
+        let inside_range = app.world().resource::<ciws::CiwsConfig>().max_range() - 100.0;
+        app.world_mut().get_mut::<Transform>(ball).unwrap().translation =
+            (origin + Vec2::ONE.normalize() * inside_range as f32).extend(1.0);
+        for _ in 0..30 {
+            app.update();
+            if !ciws_values(&mut app).is_empty() { break; }
+        }
+        assert_eq!(ciws_values(&mut app), [125_000]);
+        assert_eq!(app.world().get::<CIWS>(cannon).unwrap().bullets, 10_000_000 - 125_000);
+    }
+
+    #[test]
+    fn ciws_round_retains_edge_value_and_cannot_hit_beyond_its_range() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().max_range_battle_widths = 100.0 / TERRITORY_LOGIC_WIDTH as f64;
+        let ball = app.world_mut().spawn((
+            BigBall { team: TeamColor::Red, size: 1_000 },
+            TerritoryUnit { team: TeamColor::Red }, KinematicVelocity(Vec2::ZERO),
+            Transform::from_xyz(150.0, 0.0, 1.0),
+        )).id();
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 125_000 }, CiwsProjectile::default(),
+            BulletPrevPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::default(),
+        )).id();
+        for _ in 0..30 {
+            app.update();
+            if app.world().get::<CiwsProjectile>(projectile).unwrap().distance_traveled >= 100.0 { break; }
+        }
+        assert_eq!(app.world().get::<Bullet>(projectile).unwrap().value, 25_000);
+        assert!((app.world().get::<Transform>(projectile).unwrap().translation.x - 100.0).abs() < 0.001);
+        app.update();
+        assert!(app.world().get_entity(projectile).is_err());
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 1_000);
+    }
+
+    #[test]
+    fn ciws_range_counts_travel_after_a_boundary_reflection() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().max_range_battle_widths = 300.0 / TERRITORY_LOGIC_WIDTH as f64;
+        let pos = Vec2::new(450.0, 0.0);
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 125_000 }, CiwsProjectile::default(),
+            BulletPrevPosition(pos), LastLogicPosition(pos),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::from_translation(pos.extend(1.5)),
+        )).id();
+        for _ in 0..60 { app.update(); }
+        let traveled = app.world().get::<CiwsProjectile>(projectile).unwrap().distance_traveled;
+        let displacement = app.world().get::<Transform>(projectile).unwrap().translation.truncate().distance(pos) as f64;
+        assert!(traveled > displacement + 100.0);
+        for _ in 0..30 { app.update(); }
+        assert!(app.world().get_entity(projectile).is_err());
+    }
+
+    #[test]
+    fn ordinary_bullet_paints_and_is_consumed_when_its_budget_runs_out() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.add_systems(FixedUpdate, bullet_hit_terrain.after(bullet_hit_units_manual).before(bigball_hit_hq));
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 100 },
+            BulletPrevPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::default(),
+        )).id();
+        for _ in 0..3 { app.update(); }
+        assert!(app.world().get_entity(projectile).is_err());
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(512, 512), Some(TeamColor::Blue));
+    }
+
+    #[test]
+    fn ciws_bullet_paints_and_is_consumed_when_its_value_runs_out() {
+        let (mut app, ball, hq, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.add_systems(FixedUpdate, bullet_hit_terrain.after(bullet_hit_units_manual).before(bigball_hit_hq));
+        for entity in [ball, hq, cannon] { app.world_mut().despawn(entity); }
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 100 },
+            CiwsProjectile::default(),
+            BulletPrevPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::default(),
+        )).id();
+        for _ in 0..3 { app.update(); }
+        assert!(app.world().get_entity(projectile).is_err());
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(512, 512), Some(TeamColor::Blue));
+    }
+
+    #[test]
+    fn terrain_consumption_reduces_ciws_damage_in_a_real_engagement() {
+        let (mut app, ball, _, cannon) = defense_app(2_000_000, 400.0, 0.0, false);
+        app.world_mut().resource_mut::<ciws::CiwsConfig>().retained_value_at_max_range = 1.0;
+        app.add_systems(FixedUpdate, bullet_hit_terrain.after(bullet_hit_units_manual).before(bigball_hit_hq));
+        app.world_mut().despawn(cannon);
+        let pos = Vec2::new(200.0, 0.0);
+        // 先为弹丸铺设己方通道，只留下一个会消耗数值的中立格。
+        let mut grid = app.world_mut().resource_mut::<TerritoryGrid>();
+        for y in 0..1024 { for x in 0..1024 { grid.set(x, y, Some(TeamColor::Blue)); } }
+        grid.set(713, 512, None);
+        drop(grid);
+        let projectile = app.world_mut().spawn((
+            Bullet { team: TeamColor::Blue, value: 100 },
+            CiwsProjectile::default(),
+            BulletPrevPosition(pos), LastLogicPosition(pos),
+            KinematicVelocity(Vec2::X * BULLET_SPEED), Transform::from_translation(pos.extend(1.5)),
+        )).id();
+        for _ in 0..60 {
+            app.update();
+            if app.world().get_entity(projectile).is_err() { break; }
+        }
+        assert!(app.world().get_entity(projectile).is_err());
+        assert_eq!(app.world().resource::<TerritoryGrid>().get(713, 512), Some(TeamColor::Blue));
+        assert_eq!(app.world().get::<BigBall>(ball).unwrap().size, 2_000_000 - 99);
     }
 }
 
