@@ -82,6 +82,7 @@ fn spawn_marble(
         Restitution::new(0.6), // 弹性
         Friction::new(0.3),
         LinearVelocity(initial_velocity),
+        TranslationInterpolation,
         Mesh2d(mesh),
         MeshMaterial2d(material),
         Transform::from_translation(position.extend(0.5)),
@@ -298,7 +299,8 @@ pub fn update_marble_display(
         // 更新文本
         for (marker, mut text, mut text_transform) in text_query.iter_mut() {
             if marker.marble_entity == marble_entity {
-                text.0 = format_value(marble.value);
+                let value = format_value(marble.value);
+                if text.0 != value { text.0 = value; }
                 text_transform.translation = marble_transform.translation.with_z(1.0);
                 break;
             }

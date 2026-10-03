@@ -173,6 +173,15 @@ impl TerritoryGrid {
     ///
     /// 这是确定性的、不会漏洞的优化：只枚举位图中不是 team 的 bit。
     pub fn paint_span_no_shield(&mut self, team: TeamColor, y: u32, x0: u32, x1: u32, budget: &mut u64) -> u64 {
+        self.paint_span(team, y, x0, x1, budget, None)
+    }
+
+    /// 保护位图按行、每字 64 格排列；预算不足时仍从左到右占领。
+    pub fn paint_span_protected(&mut self, team: TeamColor, y: u32, x0: u32, x1: u32, budget: &mut u64, protected: &[u64]) -> u64 {
+        self.paint_span(team, y, x0, x1, budget, Some(protected))
+    }
+
+    fn paint_span(&mut self, team: TeamColor, y: u32, x0: u32, x1: u32, budget: &mut u64, protected: Option<&[u64]>) -> u64 {
         if *budget == 0 {
             return 0;
         }
@@ -205,6 +214,9 @@ impl TerritoryGrid {
             if w == end_word && end_bit != 63 {
                 mask &= (1u64 << (end_bit + 1)) - 1;
             }
+            if let Some(protected) = protected {
+                mask &= !protected[w];
+            }
 
             // NOTE: bits 是只读快照引用；set_id 会更新位图，但我们只用 holes 的逐 bit 枚举，
             // 且每个 bit 最多处理一次，不会漏涂。
@@ -222,7 +234,15 @@ impl TerritoryGrid {
                 let first = (w * 64).max(x0 as usize);
                 let last = (w * 64 + 63).min(x1 as usize);
                 let row_start = y as usize * self.width as usize;
-                self.cells[row_start + first..=row_start + last].fill(team_id);
+                // 掩码中的连续可写区间批量填色，护盾覆盖格保持原值。
+                let mut runs = mask;
+                while runs != 0 {
+                    let start = runs.trailing_zeros() as usize;
+                    let len = (runs >> start).trailing_ones() as usize;
+                    self.cells[row_start + w * 64 + start..row_start + w * 64 + start + len].fill(team_id);
+                    if start + len == 64 { break; }
+                    runs &= u64::MAX << (start + len);
+                }
                 for other in 0..4 {
                     if other == (team_id - 1) as usize {
                         self.team_row_bits[other][word_idx] |= mask;
@@ -371,6 +391,48 @@ impl TerritoryGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_spans_match_cellwise_painting_and_budget_order() {
+        let protection_patterns = [
+            [0, 0, 0],
+            [u64::MAX, u64::MAX, u64::MAX],
+            [0xaaaaaaaaaaaaaaaa, 0x5555555555555555, 0x8000000000000001],
+            [0xff00000000000000, 0xffff, 0],
+        ];
+        for protected in protection_patterns {
+            for limit in [0, 1, 3, 25, 100, 200] {
+                for team in TeamColor::all() {
+                    let mut fast = TerritoryGrid::new(192, 64);
+                    let mut reference = TerritoryGrid::new(192, 64);
+                    for x in 0..192 {
+                        let initial = TeamColor::all()[(x % 4) as usize];
+                        fast.set(x, 20, Some(initial));
+                        reference.set(x, 20, Some(initial));
+                    }
+                    fast.clear_dirty();
+                    let mut budget = limit;
+                    let painted = fast.paint_span_protected(team, 20, 28, 170, &mut budget, &protected);
+                    let mut reference_budget = limit;
+                    let mut reference_painted = 0;
+                    for x in 28..=170 {
+                        if reference_budget == 0 { break; }
+                        if protected[x as usize / 64] & (1u64 << (x % 64)) == 0 && reference.get(x, 20) != Some(team) {
+                            reference.set(x, 20, Some(team));
+                            reference_budget -= 1;
+                            reference_painted += 1;
+                            let tile = (20 / TILE_SIZE * TILES_PER_ROW + x / TILE_SIZE) as usize;
+                            assert_ne!(fast.dirty_tiles[tile / 64] & (1u64 << (tile % 64)), 0);
+                        }
+                    }
+                    assert_eq!(painted, reference_painted);
+                    assert_eq!(budget, reference_budget);
+                    assert_eq!(fast.cells, reference.cells);
+                    assert_eq!(fast.team_row_bits, reference.team_row_bits);
+                }
+            }
+        }
+    }
 
     #[test]
     fn bulk_span_matches_left_to_right_cell_updates() {

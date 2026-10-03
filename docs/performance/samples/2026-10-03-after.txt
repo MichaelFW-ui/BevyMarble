@@ -1,0 +1,54 @@
+
+场景 mid：1200 子弹 / 120 大球 / 24 护盾 / 8 机枪 / 12 近防炮；预热 30 帧，测量 180 帧
+计时前最小实体数：1200 子弹 / 120 大球
+ECS 帧耗时（不含场景补充和 GPU）：平均 5.63 ms，P95 10.96 ms，最大 14.53 ms
+系统                                               平均 ms/帧     最大 ms/次       调用
+territory/bigball_occupy_territory                 4.725      13.674      180
+territory/bullet_hit_units                         0.369       0.507      180
+territory/bigball_collision                        0.074       0.143      180
+territory/bullet_hit_terrain                       0.049       0.107      180
+territory/sync_bullet_rotation_to_velocity         0.030       0.050      180
+territory/update_grid_render                       0.026       0.111      180
+territory/bigball_hit_shield                       0.026       0.113      180
+territory/bigball_hit_hq                           0.005       0.022      180
+territory/bullet_move                              0.003       0.012      180
+territory/update_collision_spatial_index           0.003       0.021      180
+territory/update_target_spatial_index              0.003       0.026      180
+territory/cleanup_depleted_units                   0.002       0.007      180
+territory/bigball_integrate                        0.001       0.009      180
+territory/machine_gun_rotate_fire                  0.001       0.004      180
+territory/check_victory                            0.000       0.005      180
+territory/ciws_target_fire                         0.000       0.001      180
+territory/bullet_bullet_collision                  0.000       0.000      180
+计数 territory/grid/cell_writes                       6186 /帧
+计数 territory/grid/cells_occupied                  335866 /帧
+计数 territory/bullet/path_points                      208 /帧
+计数 territory/bullet/kernel_points_est              23528 /帧
+计数 territory/grid/dirty_tiles_updated                480 /帧
+
+场景 late：4000 子弹 / 400 大球 / 80 护盾 / 16 机枪 / 48 近防炮；预热 30 帧，测量 180 帧
+计时前最小实体数：4000 子弹 / 400 大球
+ECS 帧耗时（不含场景补充和 GPU）：平均 8.01 ms，P95 14.08 ms，最大 32.56 ms
+系统                                               平均 ms/帧     最大 ms/次       调用
+territory/bigball_occupy_territory                 3.750      28.311      180
+territory/bullet_hit_units                         2.679       6.291      180
+territory/bigball_collision                        0.544       3.493      180
+territory/sync_bullet_rotation_to_velocity         0.098       0.408      180
+territory/bigball_hit_shield                       0.073       0.262      180
+territory/update_grid_render                       0.021       0.140      180
+territory/bullet_move                              0.011       0.028      180
+territory/update_collision_spatial_index           0.009       0.036      180
+territory/bigball_hit_hq                           0.009       0.027      180
+territory/update_target_spatial_index              0.008       0.031      180
+territory/cleanup_depleted_units                   0.004       0.130      180
+territory/bigball_integrate                        0.002       0.006      180
+territory/machine_gun_rotate_fire                  0.002       0.019      180
+territory/bullet_hit_terrain                       0.001       0.024      180
+territory/ciws_target_fire                         0.000       0.004      180
+territory/check_victory                            0.000       0.003      180
+territory/bullet_bullet_collision                  0.000       0.000      180
+计数 territory/grid/cell_writes                         78 /帧
+计数 territory/grid/cells_occupied                  205328 /帧
+计数 territory/bullet/path_points                        1 /帧
+计数 territory/bullet/kernel_points_est                218 /帧
+计数 territory/grid/dirty_tiles_updated                294 /帧

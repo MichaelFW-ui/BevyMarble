@@ -96,6 +96,7 @@ fn run_scenario(config: Scenario, frames: usize, warmup: usize) {
             machine_gun_rotate_fire,
             bigball_integrate,
             bullet_integrate,
+            sync_bullet_rotation_to_velocity,
             update_collision_spatial_index,
             update_target_spatial_index,
             ciws_target_fire,
@@ -214,6 +215,19 @@ fn populate(world: &mut World, config: Scenario, rng: &mut StdRng) {
 }
 
 fn replenish_scene(world: &mut World, config: Scenario, rng: &mut StdRng) {
+    // 压测维持四队交战，避免 HQ 被摧毁后每帧清理刚补齐的单位，跳过刷地热点。
+    let mut alive = [false; 4];
+    for hq in world.query::<&HQ>().iter(world) {
+        alive[hq.team.index()] = true;
+    }
+    for (i, team) in TeamColor::all().into_iter().enumerate() {
+        if !alive[team.index()] {
+            let x = if i % 2 == 0 { -460.0 } else { 460.0 };
+            let y = if i < 2 { -460.0 } else { 460.0 };
+            world.spawn((HQ { team }, TerritoryUnit { team }, Transform::from_xyz(x, y, 2.0)));
+        }
+    }
+    *world.resource_mut::<GameOver>() = GameOver::default();
     replenish_bullets(world, config.bullets, rng);
     let bigballs = world.query::<&BigBall>().iter(world).count();
     for i in bigballs..config.bigballs {

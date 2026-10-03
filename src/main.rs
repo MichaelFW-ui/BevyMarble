@@ -1,8 +1,8 @@
 use avian2d::prelude::*;
-use bevy::prelude::*;
-use bevy::camera::{OrthographicProjection, Projection, ScalingMode, Viewport};
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{OrthographicProjection, Projection, ScalingMode, Viewport};
 use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
+use bevy::prelude::*;
 use bevy::time::Virtual;
 use std::time::Duration;
 

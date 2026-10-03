@@ -18,6 +18,53 @@ pub struct TerritorySettings {
     pub ciws_distance_metric: CiwsDistanceMetric,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::asset::AssetApp;
+    use bevy::time::TimeUpdateStrategy;
+    use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
+    use crate::colors::TeamColor;
+    use crate::events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
+    use crate::profiler::Profiler;
+    use super::super::components::*;
+    use std::time::Duration;
+
+    #[test]
+    fn bullet_keeps_moving_between_fixed_steps_in_the_game_schedule() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformInterpolationPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<ColorMaterial>()
+            .init_asset::<Font>()
+            .init_resource::<Profiler>()
+            .add_message::<ActionEvent>()
+            .add_message::<VictoryEvent>()
+            .add_message::<UnitDestroyedEvent>()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 240.0)))
+            .add_plugins(TerritoryPlugin);
+        app.finish();
+        app.cleanup();
+        let bullet = app.world_mut().spawn((
+            Bullet { team: TeamColor::Red, value: 100_000 },
+            LogicPosition(Vec2::ZERO), LastLogicPosition(Vec2::ZERO), BulletPrevPosition(Vec2::ZERO),
+            KinematicVelocity(Vec2::new(250.0, 0.0)),
+            bevy_transform_interpolation::prelude::TranslationInterpolation,
+            Transform::default(),
+        )).id();
+        for _ in 0..8 { app.update(); }
+        let mut previous_x = app.world().get::<Transform>(bullet).unwrap().translation.x;
+        for _ in 0..16 {
+            app.update();
+            let x = app.world().get::<Transform>(bullet).unwrap().translation.x;
+            assert!((x - previous_x - 250.0 / 240.0).abs() < 0.001,
+                "子弹在固定步之间停顿或跳跃：{previous_x} -> {x}");
+            previous_x = x;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CiwsDistanceMetric {
     /// L1 距离：`|dx| + |dy|`（更便宜，但方向有偏好）
@@ -68,6 +115,7 @@ impl Plugin for TerritoryPlugin {
                     machine_gun_rotate_fire,
                     bigball_integrate,
                     bullet_integrate,
+                    sync_bullet_rotation_to_velocity,
                     update_collision_spatial_index,
                     update_target_spatial_index.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
                     ciws_target_fire.run_if(|settings: Res<TerritorySettings>| settings.enable_ciws),
@@ -94,8 +142,7 @@ impl Plugin for TerritoryPlugin {
                     show_game_state,
                     handle_unit_destroyed_event,
                 ),
-            )
-            .add_systems(PostUpdate, sync_bullet_rotation_to_velocity);
+            );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(Render, upload_grid_texture.in_set(RenderSystems::Prepare));
         }

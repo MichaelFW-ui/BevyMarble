@@ -11,7 +11,7 @@ use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
-use std::collections::VecDeque;
+use std::sync::Arc;
 
 use super::coords::{TERRITORY_LOGIC_HEIGHT, TERRITORY_LOGIC_WIDTH};
 use crate::profiler::{CounterId, Profiler, ScopeId};
@@ -40,7 +40,7 @@ impl Material2d for GridMaterial {
 #[derive(Resource, Clone, ExtractResource)]
 pub struct GridUpload {
     image: Handle<Image>,
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
     generation: u64,
 }
 
@@ -80,7 +80,7 @@ pub fn setup_grid_render(
     // 保存 handle 用于后续更新
     commands.insert_resource(GridUpload {
         image: image_handle,
-        data: Vec::new(),
+        data: Arc::default(),
         generation: 0,
     });
 
@@ -97,44 +97,39 @@ pub fn setup_grid_render(
     ));
 }
 
-/// 固定步模拟产出的完整领土画面；满队列时保留最新画面，限制延迟与内存。
+/// 多个固定步合并为一次呈现，在 Update 中直接采集最新网格。
 #[derive(Resource, Default)]
 pub struct GridFrameBuffer {
-    frames: VecDeque<Vec<u8>>,
-    elapsed: f32,
-}
-
-const MAX_BUFFERED_FRAMES: usize = 4;
-const GRID_PRESENT_INTERVAL: f32 = 1.0 / 60.0;
-
-impl GridFrameBuffer {
-    fn push(&mut self, frame: Vec<u8>) {
-        if self.frames.len() == MAX_BUFFERED_FRAMES { self.frames.pop_front(); }
-        self.frames.push_back(frame);
-    }
+    pending: bool,
+    dirty_tiles: u32,
 }
 
 pub fn capture_grid_frame(mut grid: ResMut<TerritoryGrid>, mut buffer: ResMut<GridFrameBuffer>) {
     if !grid.is_dirty() { return; }
-    buffer.push(grid.cells().to_vec());
+    buffer.pending = true;
+    buffer.dirty_tiles = buffer.dirty_tiles.saturating_add(grid.get_dirty_count());
     grid.clear_dirty();
 }
 
-/// 呈现阶段只取一帧。模拟可在一次呈现之间运行多步，队列把突发更新摊开。
+/// 每次呈现使用最新状态；复用无共享的 CPU 缓冲，提取阶段只克隆 Arc。
 pub fn update_grid_render(
     profiler: Res<Profiler>,
-    time: Res<Time<Real>>,
+    grid: Res<TerritoryGrid>,
     mut buffer: ResMut<GridFrameBuffer>,
     mut upload: ResMut<GridUpload>,
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryUpdateGridRender);
-    buffer.elapsed = (buffer.elapsed + time.delta_secs()).min(GRID_PRESENT_INTERVAL);
-    if buffer.elapsed < GRID_PRESENT_INTERVAL { return; }
-    let Some(frame) = buffer.frames.pop_front() else { return; };
-    upload.data = frame;
+    if !buffer.pending { return; }
+    if let Some(data) = Arc::get_mut(&mut upload.data) {
+        data.clear();
+        data.extend_from_slice(grid.cells());
+    } else {
+        upload.data = Arc::new(grid.cells().to_vec());
+    }
     upload.generation = upload.generation.wrapping_add(1);
-    buffer.elapsed = 0.0;
-    profiler.add_counter(CounterId::TerritoryDirtyTilesUpdated, TOTAL_TILES as u64);
+    profiler.add_counter(CounterId::TerritoryDirtyTilesUpdated, buffer.dirty_tiles.min(TOTAL_TILES as u32) as u64);
+    buffer.pending = false;
+    buffer.dirty_tiles = 0;
 }
 
 /// 保留纹理与材质绑定，只把新画面写入已经创建的 GPU 纹理。
@@ -166,12 +161,32 @@ pub fn upload_grid_texture(
 mod tests {
     use super::*;
     #[test]
-    fn keeps_recent_complete_frames_in_order() {
-        let mut buffer = GridFrameBuffer::default();
-        for value in 0..6 { buffer.push(vec![value]); }
-        assert_eq!(buffer.frames.len(), MAX_BUFFERED_FRAMES);
-        assert_eq!(buffer.frames.pop_front(), Some(vec![2]));
-        assert_eq!(buffer.frames.pop_back(), Some(vec![5]));
+    fn catch_up_presents_latest_grid_without_waiting_for_a_timer() {
+        let mut app = App::new();
+        app.init_resource::<Profiler>()
+            .insert_resource(TerritoryGrid::new(1024, 1024))
+            .init_resource::<GridFrameBuffer>()
+            .insert_resource(GridUpload { image: Handle::default(), data: Arc::default(), generation: 0 })
+            .add_systems(FixedUpdate, capture_grid_frame)
+            .add_systems(Update, update_grid_render);
+        for team in [crate::colors::TeamColor::Red, crate::colors::TeamColor::Blue] {
+            app.world_mut().resource_mut::<TerritoryGrid>().set(512, 512, Some(team));
+            app.world_mut().run_schedule(FixedUpdate);
+        }
+        app.update();
+        let upload = app.world().resource::<GridUpload>();
+        assert_eq!(upload.data[512 * 1024 + 512], crate::colors::TeamColor::Blue.to_id());
+        assert_eq!(upload.generation, 1);
+        let extracted = GridUpload::extract_resource(upload);
+        assert!(Arc::ptr_eq(&upload.data, &extracted.data));
+        app.update();
+        assert_eq!(app.world().resource::<GridUpload>().generation, 1);
+        // 下次写入保持渲染世界已提取的画面有效。
+        app.world_mut().resource_mut::<TerritoryGrid>().set(512, 512, Some(crate::colors::TeamColor::Green));
+        app.world_mut().run_schedule(FixedUpdate);
+        app.update();
+        assert_eq!(extracted.data[512 * 1024 + 512], crate::colors::TeamColor::Blue.to_id());
+        assert_eq!(app.world().resource::<GridUpload>().data[512 * 1024 + 512], crate::colors::TeamColor::Green.to_id());
     }
 }
 

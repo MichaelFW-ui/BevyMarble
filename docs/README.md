@@ -12,6 +12,7 @@
 
 ## 性能
 
+- [帧率波动排查与优化](performance/frame-stability.md)：IDE 构建优化、刷新与插值修复、战斗热点、压测前后对比和验证记录。
 - [离线性能分析与优化记录](performance/offline-profiler.md)：分析器用法、测量结果、已实施优化和测量边界。
 - [早期优化方案](performance/optimization-ideas.md)：历史方案草稿；阅读时以当前代码和性能记录为准。
 

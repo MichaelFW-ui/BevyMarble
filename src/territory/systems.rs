@@ -205,6 +205,8 @@ pub struct CollisionSpatialIndex {
     buckets: Vec<Vec<CollisionEntry>>,
     /// 记录非空桶索引，优化 clear
     active_buckets: Vec<usize>,
+    max_target_radius: f32,
+    max_bigball_radius: f32,
 }
 
 impl Default for CollisionSpatialIndex {
@@ -224,6 +226,8 @@ impl Default for CollisionSpatialIndex {
             min_y,
             buckets: vec![Vec::new(); bucket_count],
             active_buckets: Vec::with_capacity(bucket_count / 4),
+            max_target_radius: 0.0,
+            max_bigball_radius: 0.0,
         }
     }
 }
@@ -235,6 +239,8 @@ impl CollisionSpatialIndex {
             self.buckets[idx].clear();
         }
         self.active_buckets.clear();
+        self.max_target_radius = 0.0;
+        self.max_bigball_radius = 0.0;
     }
 
     #[inline]
@@ -255,6 +261,12 @@ impl CollisionSpatialIndex {
     /// 插入实体到空间索引
     fn insert(&mut self, entry: CollisionEntry) {
         if let Some((cx, cy)) = self.cell_of(entry.pos) {
+            if entry.kind != CollisionEntityKind::Bullet {
+                self.max_target_radius = self.max_target_radius.max(entry.radius);
+            }
+            if entry.kind == CollisionEntityKind::BigBall {
+                self.max_bigball_radius = self.max_bigball_radius.max(entry.radius);
+            }
             let idx = self.bucket_index(cx, cy);
             if self.buckets[idx].is_empty() {
                 self.active_buckets.push(idx);
@@ -270,20 +282,7 @@ impl CollisionSpatialIndex {
         pos: Vec2,
         query_radius: f32,
     ) -> impl Iterator<Item = &'a CollisionEntry> {
-        let cells_to_check = (query_radius / self.cell_size).ceil() as i32 + 1;
-        let (cx, cy) = self.cell_of(pos).unwrap_or((0, 0));
-
-        let min_cx = (cx - cells_to_check).max(0);
-        let max_cx = (cx + cells_to_check).min(self.grid_w - 1);
-        let min_cy = (cy - cells_to_check).max(0);
-        let max_cy = (cy + cells_to_check).min(self.grid_h - 1);
-
-        (min_cy..=max_cy).flat_map(move |y| {
-            (min_cx..=max_cx).flat_map(move |x| {
-                let idx = self.bucket_index(x, y);
-                self.buckets[idx].iter()
-            })
-        })
+        self.query_segment(pos, pos, query_radius)
     }
 
     /// 查询线段路径上的实体（用于子弹连续碰撞检测）
@@ -1093,8 +1092,8 @@ pub fn bullet_hit_units_manual(
 ) {
     let _scope = profiler.scope(ScopeId::TerritoryBulletHitUnits);
 
-    // 最大查询半径：护盾半径 + 子弹半径
-    let max_query_radius = BIGBALL_MAX_RADIUS.max(SHIELD_RADIUS) + BULLET_RADIUS;
+    // 使用本步索引中实际存在的最大半径，保留所有可能命中目标。
+    let max_query_radius = collision_index.max_target_radius + BULLET_RADIUS;
 
     for (bullet_entity, bullet, transform, prev) in bullets.iter() {
         if pending_despawns.contains(bullet_entity) { continue; }
@@ -1259,7 +1258,7 @@ pub fn bullet_bullet_collision_manual(
     }
 }
 
-/// 护盾覆盖位图按队伍占 4 bit。护盾静止时复用，避免每次占领都做距离计算。
+/// 每队缓存敌方护盾覆盖位图。护盾静止时复用，按 64 格批量排除保护区域。
 #[derive(Clone, Copy, PartialEq)]
 struct ShieldCoverageKey {
     entity: Entity,
@@ -1270,7 +1269,8 @@ struct ShieldCoverageKey {
 
 #[derive(Default)]
 pub(super) struct ShieldCoverage {
-    mask: Vec<u8>,
+    protected_rows: [Vec<u64>; 4],
+    row_words: usize,
     keys: Vec<ShieldCoverageKey>,
     next_keys: Vec<ShieldCoverageKey>,
     width: u32,
@@ -1281,16 +1281,20 @@ impl ShieldCoverage {
     fn update(&mut self, grid: &TerritoryGrid, shields: impl Iterator<Item = ShieldCoverageKey>) {
         self.next_keys.clear();
         self.next_keys.extend(shields);
-        let cells = (grid.width * grid.height) as usize;
-        if self.mask.len() == cells && self.width == grid.width && self.height == grid.height
+        let row_words = (grid.width as usize).div_ceil(64);
+        let words = row_words * grid.height as usize;
+        if self.protected_rows[0].len() == words && self.width == grid.width && self.height == grid.height
             && self.keys == self.next_keys {
             return;
         }
         std::mem::swap(&mut self.keys, &mut self.next_keys);
         self.width = grid.width;
         self.height = grid.height;
-        self.mask.resize(cells, 0);
-        self.mask.fill(0);
+        self.row_words = row_words;
+        for rows in &mut self.protected_rows {
+            rows.resize(words, 0);
+            rows.fill(0);
+        }
 
         let x_scale = grid.width as f32 / TERRITORY_LOGIC_WIDTH;
         let y_scale = grid.height as f32 / TERRITORY_LOGIC_HEIGHT;
@@ -1317,19 +1321,32 @@ impl ShieldCoverage {
                 if min_x > max_x {
                     continue;
                 }
-                let row = y as usize * grid.width as usize;
-                let bit = 1u8 << shield.team.index();
-                for cell in &mut self.mask[row + min_x as usize..=row + max_x as usize] {
-                    *cell |= bit;
+                let row = y as usize * row_words;
+                let first_word = min_x as usize / 64;
+                let last_word = max_x as usize / 64;
+                for word in first_word..=last_word {
+                    let first_bit = if word == first_word { min_x % 64 } else { 0 };
+                    let last_bit = if word == last_word { max_x % 64 } else { 63 };
+                    let bits = (u64::MAX << first_bit) & (u64::MAX >> (63 - last_bit));
+                    for team in TeamColor::all() {
+                        if team != shield.team {
+                            self.protected_rows[team.index()][row + word] |= bits;
+                        }
+                    }
                 }
             }
         }
     }
 
-    #[inline]
+    fn protected_row(&self, y: u32, team: TeamColor) -> &[u64] {
+        let row = y as usize * self.row_words;
+        &self.protected_rows[team.index()][row..row + self.row_words]
+    }
+
+    #[cfg(test)]
     fn enemy_protects(&self, x: u32, y: u32, width: u32, team: TeamColor) -> bool {
-        let mask = self.mask[(y * width + x) as usize];
-        mask & !(1u8 << team.index()) != 0
+        debug_assert_eq!(width, self.width);
+        self.protected_row(y, team)[x as usize / 64] & (1u64 << (x % 64)) != 0
     }
 }
 
@@ -1372,21 +1389,9 @@ pub fn bigball_occupy_territory(
                     if start > end || grid.row_all_team(ball.team.to_id(), y as u32, start, end) {
                         continue;
                     }
-                    // 护盾把一行切成若干可占领区间；位图批量染色保持从左到右消耗数值。
-                    let mut x = start;
-                    while x <= end && ball.size > 0 {
-                        while x <= end && shield_coverage.enemy_protects(x, y as u32, grid.width, ball.team) {
-                            x += 1;
-                        }
-                        let span_start = x;
-                        while x <= end && !shield_coverage.enemy_protects(x, y as u32, grid.width, ball.team) {
-                            x += 1;
-                        }
-                        if span_start < x {
-                            let painted = grid.paint_span_no_shield(ball.team, y as u32, span_start, x - 1, &mut ball.size);
-                            if profiling { occupied_cells += painted; }
-                        }
-                    }
+                    let protected = shield_coverage.protected_row(y as u32, ball.team);
+                    let painted = grid.paint_span_protected(ball.team, y as u32, start, end, &mut ball.size, protected);
+                    if profiling { occupied_cells += painted; }
                     if ball.size == 0 { break 'path; }
                 }
             }
@@ -1474,7 +1479,7 @@ pub fn bigball_collision(
         if ball1.size == 0 { continue; }
         let p1 = t1.translation.truncate();
         let r1 = bigball_radius(ball1.size);
-        for entry in collision_index.query_nearby(p1, r1 + BIGBALL_MAX_RADIUS) {
+        for entry in collision_index.query_nearby(p1, r1 + collision_index.max_bigball_radius) {
             if entry.kind != CollisionEntityKind::BigBall {
                 continue;
             }
@@ -1752,7 +1757,8 @@ pub fn sync_bullet_rotation_to_velocity(
             continue;
         }
         let angle = v.y.atan2(v.x);
-        transform.rotation = Quat::from_rotation_z(angle);
+        let rotation = Quat::from_rotation_z(angle);
+        if transform.rotation != rotation { transform.rotation = rotation; }
     }
 }
 
@@ -1769,11 +1775,13 @@ pub fn update_bigball_value_text(
         let value = format_value(ball.size);
         for child in children.iter() {
             if let Ok((mut text, mut transform)) = texts.get_mut(child) {
-                text.0 = value.clone();
-                transform.translation.y = bigball_radius(ball.size) + 10.0;
+                if text.0 != value { text.0.clone_from(&value); }
+                let y = bigball_radius(ball.size) + 10.0;
+                if transform.translation.y != y { transform.translation.y = y; }
             }
             if let Ok(mut transform) = visuals.get_mut(child) {
-                transform.scale = Vec3::splat(bigball_radius(ball.size) / BIGBALL_RADIUS);
+                let scale = Vec3::splat(bigball_radius(ball.size) / BIGBALL_RADIUS);
+                if transform.scale != scale { transform.scale = scale; }
             }
         }
     }
@@ -2254,6 +2262,54 @@ mod collision_index_bounds_tests {
     use super::*;
 
     #[test]
+    fn tighter_queries_preserve_all_circle_hits_including_large_shields() {
+        let mut index = CollisionSpatialIndex::default();
+        let mut entries = Vec::new();
+        for x in [-480.0, -181.0, 0.0, 181.0, 480.0] {
+            for y in [-480.0, 0.0, 480.0] {
+                for radius in [6.0, 15.0, 50.0, 125.0, 180.0] {
+                    let entry = CollisionEntry {
+                        entity: Entity::from_bits(entries.len() as u64 + 1),
+                        team: TeamColor::Blue,
+                        pos: Vec2::new(x, y),
+                        kind: if radius == 180.0 { CollisionEntityKind::Shield } else { CollisionEntityKind::BigBall },
+                        radius,
+                    };
+                    index.insert(entry);
+                    entries.push(entry);
+                }
+            }
+        }
+        for (start, end) in [
+            (Vec2::new(-510.0, 480.0), Vec2::new(-490.0, 480.0)),
+            (Vec2::new(-200.0, 20.0), Vec2::new(200.0, -20.0)),
+            (Vec2::new(0.0, 50.0), Vec2::new(0.0, 50.0)),
+            (Vec2::new(480.0, 480.0), Vec2::new(500.0, 500.0)),
+        ] {
+            let hits = |entry: &&CollisionEntry| segment_circle_t(start, end, entry.pos, entry.radius + BULLET_RADIUS).is_some();
+            let mut expected: Vec<_> = entries.iter().filter(hits).map(|entry| entry.entity).collect();
+            let mut actual: Vec<_> = index.query_segment(start, end, index.max_target_radius + BULLET_RADIUS)
+                .filter(hits).map(|entry| entry.entity).collect();
+            expected.sort();
+            actual.sort();
+            assert_eq!(actual, expected);
+            let mut expected_near: Vec<_> = entries.iter()
+                .filter(|entry| entry.pos.distance(start) <= BULLET_RADIUS + entry.radius)
+                .map(|entry| entry.entity).collect();
+            let mut actual_near: Vec<_> = index.query_nearby(start, index.max_target_radius + BULLET_RADIUS)
+                .filter(|entry| entry.pos.distance(start) <= BULLET_RADIUS + entry.radius)
+                .map(|entry| entry.entity).collect();
+            expected_near.sort();
+            actual_near.sort();
+            assert_eq!(actual_near, expected_near);
+        }
+        index.clear_active();
+        index.insert(CollisionEntry { radius: 15.0, ..entries[0] });
+        assert_eq!(index.max_target_radius, 15.0);
+        assert_eq!(index.max_bigball_radius, 15.0);
+    }
+
+    #[test]
     fn bullet_entries_follow_collision_setting() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -2292,5 +2348,30 @@ mod collision_index_bounds_tests {
         ).map(|entry| entry.entity).collect();
         assert!(found.contains(&near));
         assert!(!found.contains(&far));
+    }
+}
+
+#[cfg(test)]
+mod text_change_tests {
+    use super::*;
+
+    #[test]
+    fn rounded_value_changes_do_not_relayout_identical_text() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Profiler>()
+            .add_systems(Update, update_bigball_value_text);
+        let ball = app.world_mut().spawn(BigBall { team: TeamColor::Red, size: 1_001 }).id();
+        let text = app.world_mut().spawn((BigBallValueText, Text2d::new("1K"), Transform::default())).id();
+        app.world_mut().entity_mut(ball).add_child(text);
+        app.update();
+        let first_tick = app.world().entity(text).get_ref::<Text2d>().unwrap().last_changed();
+        app.world_mut().get_mut::<BigBall>(ball).unwrap().size = 1_999;
+        app.update();
+        assert_eq!(app.world().entity(text).get_ref::<Text2d>().unwrap().last_changed(), first_tick);
+        app.world_mut().get_mut::<BigBall>(ball).unwrap().size = 2_000;
+        app.update();
+        assert_eq!(app.world().get::<Text2d>(text).unwrap().0, "2K");
+        assert_ne!(app.world().entity(text).get_ref::<Text2d>().unwrap().last_changed(), first_tick);
     }
 }

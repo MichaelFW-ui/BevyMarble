@@ -287,7 +287,10 @@ impl Profiler {
         scope.window_sum_ns.fetch_add(ns, Ordering::Relaxed);
         scope.window_calls.fetch_add(1, Ordering::Relaxed);
         scope.window_max_ns.fetch_max(ns, Ordering::Relaxed);
-        self.frame_accounted_ns.fetch_add(ns, Ordering::Relaxed);
+        // 固定步总时间包含子系统，汇总时只计子系统，避免重复计时。
+        if id != ScopeId::FixedMainLoop {
+            self.frame_accounted_ns.fetch_add(ns, Ordering::Relaxed);
+        }
     }
 }
 
@@ -316,7 +319,7 @@ impl Plugin for ProfilerPlugin {
             .add_systems(First, profiler_begin_frame)
             .add_systems(FixedFirst, fixed_loop_begin)
             .add_systems(FixedLast, fixed_loop_end)
-            .add_systems(Last, (toggle_overlay, position_overlay, update_overlay, profiler_end_frame).chain());
+            .add_systems(Last, (toggle_overlay, position_overlay, profiler_end_frame, update_overlay).chain());
     }
 }
 

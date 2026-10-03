@@ -8,3 +8,11 @@ bevy = "0.17"
 bevy_transform_interpolation = "0.3"
 avian2d = "0.4"
 rand = "0.8"
+
+# IDE 默认使用 dev 构建；保留调试信息，并优化每帧游戏逻辑。
+[profile.dev]
+opt-level = 1
+
+# Bevy、Avian 等依赖只在首次构建时付出编译成本。
+[profile.dev.package."*"]
+opt-level = 3
