@@ -2,12 +2,24 @@
 name = "bevymarble"
 version = "0.1.0"
 edition = "2024"
+default-run = "bevymarble"
+
+[features]
+editor = ["dep:bevy_egui"]
+
+[[bin]]
+name = "pinball_editor"
+path = "src/bin/pinball_editor.rs"
+required-features = ["editor"]
 
 [dependencies]
 bevy = "0.17"
 bevy_transform_interpolation = "0.3"
 avian2d = "0.4"
 rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bevy_egui = { version = "0.38", optional = true, default-features = false, features = ["default_fonts", "render"] }
 
 # IDE 默认使用 dev 构建；保留调试信息，并优化每帧游戏逻辑。
 [profile.dev]

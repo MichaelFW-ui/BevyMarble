@@ -8,7 +8,8 @@ use bevy::window::PrimaryWindow;
 use std::time::Duration;
 
 use bevymarble::events::{ActionEvent, UnitDestroyedEvent, VictoryEvent};
-use bevymarble::pinball::{self, PinballPlugin};
+use bevymarble::pinball::PinballPlugin;
+use bevymarble::pinball::profile::{PinballProfile, ProfileLibrary, profile_path};
 use bevymarble::profiler::ProfilerPlugin;
 use bevymarble::territory::{self, TerritoryPlugin};
 
@@ -22,7 +23,9 @@ const TERRITORY_CAMERA_PADDING: f32 = 48.0;
 #[derive(Component)]
 struct GameCamera;
 
-fn main() {
+fn main() -> Result<(), String> {
+    let profile = ProfileLibrary::load(&profile_path())?.active().clone();
+    let gravity = Gravity(Vec2::from_array(profile.gravity));
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -35,7 +38,8 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_plugins(PhysicsPlugins::default())
-        .insert_resource(Gravity(Vec2::NEG_Y * 490.0)) // 重力加速度
+        .insert_resource(gravity)
+        .insert_resource(profile)
         .add_message::<ActionEvent>()
         .add_message::<VictoryEvent>()
         .add_message::<UnitDestroyedEvent>()
@@ -45,6 +49,7 @@ fn main() {
         .add_systems(Startup, (configure_time, setup))
         .add_systems(Update, update_game_viewports)
         .run();
+    Ok(())
 }
 
 fn configure_time(mut time: ResMut<Time<Virtual>>) {
@@ -53,7 +58,11 @@ fn configure_time(mut time: ResMut<Time<Virtual>>) {
     time.set_max_delta(Duration::from_millis(50));
 }
 
-fn setup(mut commands: Commands, window: Single<&Window, With<PrimaryWindow>>) {
+fn setup(
+    mut commands: Commands,
+    window: Single<&Window, With<PrimaryWindow>>,
+    profile: Res<PinballProfile>,
+) {
     let window_size = window.resolution.physical_size();
     let left_width = (window_size.x as f32 * PINBALL_VIEWPORT_FRACTION).round() as u32;
     let right_width = window_size.x.saturating_sub(left_width);
@@ -74,8 +83,8 @@ fn setup(mut commands: Commands, window: Single<&Window, With<PrimaryWindow>>) {
         Projection::from(OrthographicProjection {
             // 两个轴都容纳完整场地，并在外框周围留出显示空间。
             scaling_mode: ScalingMode::AutoMin {
-                min_width: pinball::PINBALL_WIDTH + PINBALL_CAMERA_PADDING * 2.0,
-                min_height: pinball::PINBALL_HEIGHT + PINBALL_CAMERA_PADDING * 2.0,
+                min_width: profile.width + PINBALL_CAMERA_PADDING * 2.0,
+                min_height: profile.height + PINBALL_CAMERA_PADDING * 2.0,
             },
             scale: 1.0,
             ..OrthographicProjection::default_2d()

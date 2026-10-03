@@ -9,6 +9,7 @@
 ## 学习资料
 
 - [Rust 语法入门](guides/rust-introduction.md)：结合项目代码介绍 Rust 与 Bevy ECS 中用到的语法。
+- [弹珠机编辑器](guides/pinball-editor.md)：布局、效果、物理预览、统一 profile 保存和默认弹珠机选择。
 
 ## 性能
 

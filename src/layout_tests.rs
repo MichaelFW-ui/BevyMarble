@@ -10,6 +10,7 @@ use bevy::window::{PrimaryWindow, WindowCreated, WindowResized, WindowScaleFacto
 fn resize_and_dpi_changes_keep_viewports_inside_window() {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_resource::<PinballProfile>()
         .init_asset::<Image>()
         .init_resource::<ManualTextureViews>()
         .add_message::<WindowCreated>()

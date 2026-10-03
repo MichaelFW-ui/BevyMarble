@@ -46,8 +46,9 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 - `plugin.rs`：`PinballPlugin` 注册本模块系统（`Startup/Update`）。
 - `components.rs`：弹珠机侧组件定义：
   - `Marble`（队伍与数值）、`MultiplierZone`（加倍区）、`ActionZone`（行动选择区）等。
-- `layout.rs`：弹珠机“关卡/摆放”生成（墙、钉子、加倍区、行动区、四队出生点）。
-  - 关键常量：`PINBALL_WIDTH/HEIGHT`（弹珠机逻辑空间尺寸）。
+- `profile.rs`：统一 profile 数据模型、文件验证和原子保存；场地尺寸、重力、弹珠参数及每个对象的几何、材质和效果均由数据定义。
+- `layout.rs`：读取当前 profile 生成墙、钉子、加倍区、行动区、加速区和四队出生点，网格与碰撞体共用实际尺寸。
+- `src/editor.rs` 与 `src/bin/pinball_editor.rs`：通过 `editor` feature 启用独立编辑器，提供 profile 管理、画布和属性编辑、撤销重做及共用物理系统的预览。
 - `systems.rs`：运行时逻辑：
   - 生成初始弹珠（`spawn_initial_marbles`）
   - 处理碰撞：进入加倍区翻倍（`check_multiplier_collision`）；进入行动区发送 `ActionEvent` 并重置弹珠（`check_action_zone_collision`）
@@ -136,7 +137,7 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 本项目采用 **强隔离** 的坐标与布局原则：
 
 - **游戏空间（Game Space）**：用于物理、碰撞、AI、占领等一切游戏逻辑；不引用像素尺寸、不引用屏幕偏移、不依赖窗口大小。
-  - Pinball 的游戏空间尺寸由 `PINBALL_WIDTH/HEIGHT` 定义（见 `src/pinball/layout.rs`），整体以原点居中。
+  - Pinball 的游戏空间尺寸由当前 `PinballProfile` 的 `width/height` 定义，整体以原点居中。游戏启动从 `assets/pinball/profiles.json` 加载默认 profile，选择与编辑操作由独立编辑器提供。
   - Territory 的游戏空间尺寸由 `TERRITORY_LOGIC_WIDTH/HEIGHT` 定义（见 `src/territory/coords.rs`），整体以原点居中，网格坐标与该空间直接换算。
 - **渲染空间（Render/Viewport）**：只负责“画面怎么摆”和“渲染哪些实体”。
   - 左右分屏通过 `Camera.viewport` 实现（`src/main.rs`）。
@@ -149,7 +150,7 @@ BevyMarble 是一个基于 **Bevy 0.17** 的 2D 游戏原型，整体采用 **EC
 ### 7.1 新增一种“行动类型”
 
 1. 在 `src/events.rs` 的 `ActionType` 增加枚举值
-2. 在 `src/pinball/layout.rs` 的 `spawn_action_zones` 增加一个对应的 `ActionZoneType` 与显示区
+2. 扩展 `ActionZoneType`、profile 标签及编辑器行动选项，通过编辑器添加对应行动区域
 3. 在 `src/pinball/systems.rs` 的 `check_action_zone_collision` 映射到新的 `ActionType`
 4. 在 `src/territory/systems.rs` 的 `spawn_units_from_events` 处理该 `ActionType` 并生成单位/触发效果
 5. 如需新单位：在 `src/territory/components.rs` 增加组件，并在 `TerritoryPlugin` 的 `Update` 注册相关系统

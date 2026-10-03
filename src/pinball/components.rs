@@ -1,46 +1,52 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use crate::colors::TeamColor;
 use super::utils::MAX_VALUE;
+use crate::colors::TeamColor;
 
 /// 弹珠小球组件
 #[derive(Component, Debug, Clone)]
 pub struct Marble {
     pub team: TeamColor,
-    pub value: u64, // 初始为2，经过加倍区后翻倍，最大32B
+    pub value: u64, // 初始数值来自 profile，上限为 32B
 }
 
 impl Marble {
-    pub fn new(team: TeamColor) -> Self {
-        Self { team, value: 1000 } // 从1K起步
-    }
-
-    pub fn reset(&mut self) {
-        self.value = 1000;
-    }
-
     pub fn multiply(&mut self, multiplier: u64) {
         self.value = self.value.saturating_mul(multiplier).min(MAX_VALUE);
     }
 }
 
+#[derive(Component)]
+pub struct PinballSceneEntity;
+
 /// 加倍区域组件
 #[derive(Component, Debug, Clone, Copy)]
 pub struct MultiplierZone {
     pub multiplier: u64, // x2, x4, x8
+    pub reset_position: bool,
 }
 
 /// 行动选择区域组件
 #[derive(Component, Debug, Clone, Copy)]
 pub struct ActionZone {
     pub action_type: ActionZoneType,
+    pub value_scale: f32,
+    pub reset_position: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BoostZone {
+    pub velocity: Vec2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ActionZoneType {
     BigBall,
     Shield,
     MachineGun,
+    #[serde(rename = "ciws")]
     CIWS,
 }
 

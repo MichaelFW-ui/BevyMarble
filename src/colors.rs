@@ -1,10 +1,12 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// 四种队伍颜色，从四个角落开始
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Component, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Component, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TeamColor {
     #[default]
-    Red,    // 左上角
+    Red, // 左上角
     Blue,   // 右上角
     Green,  // 左下角
     Yellow, // 右下角
@@ -64,10 +66,10 @@ impl TeamColor {
     /// 获取队伍在网格中的起始角落位置 (x, y)，基于1024x1024网格
     pub fn start_corner(&self) -> (u32, u32) {
         match self {
-            TeamColor::Red => (0, 1023),          // 左上角
-            TeamColor::Blue => (1023, 1023),      // 右上角
-            TeamColor::Green => (0, 0),           // 左下角
-            TeamColor::Yellow => (1023, 0),       // 右下角
+            TeamColor::Red => (0, 1023),     // 左上角
+            TeamColor::Blue => (1023, 1023), // 右上角
+            TeamColor::Green => (0, 0),      // 左下角
+            TeamColor::Yellow => (1023, 0),  // 右下角
         }
     }
 }

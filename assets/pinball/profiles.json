@@ -1,0 +1,2406 @@
+{
+  "version": 1,
+  "default_profile": "classic",
+  "profiles": [
+    {
+      "id": "classic",
+      "name": "Classic",
+      "width": 400.0,
+      "height": 800.0,
+      "gravity": [
+        0.0,
+        -490.0
+      ],
+      "marble": {
+        "initial_value": 1000,
+        "restitution": 0.6,
+        "friction": 0.3,
+        "spawn_speed": 50.0,
+        "rescue_speed": 420.0
+      },
+      "objects": [
+        {
+          "id": 1,
+          "name": "Wall 1",
+          "enabled": true,
+          "position": [
+            -200.0,
+            0.0
+          ],
+          "size": [
+            10.0,
+            800.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 2,
+          "name": "Wall 2",
+          "enabled": true,
+          "position": [
+            200.0,
+            0.0
+          ],
+          "size": [
+            10.0,
+            800.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 3,
+          "name": "Wall 3",
+          "enabled": true,
+          "position": [
+            0.0,
+            -400.0
+          ],
+          "size": [
+            400.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 4,
+          "name": "Wall 4",
+          "enabled": true,
+          "position": [
+            0.0,
+            400.0
+          ],
+          "size": [
+            400.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 5,
+          "name": "Peg 5",
+          "enabled": true,
+          "position": [
+            -120.0,
+            250.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 6,
+          "name": "Peg 6",
+          "enabled": true,
+          "position": [
+            -40.0,
+            250.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 7,
+          "name": "Peg 7",
+          "enabled": true,
+          "position": [
+            40.0,
+            250.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 8,
+          "name": "Peg 8",
+          "enabled": true,
+          "position": [
+            120.0,
+            250.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 9,
+          "name": "Peg 9",
+          "enabled": true,
+          "position": [
+            -80.0,
+            200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 10,
+          "name": "Peg 10",
+          "enabled": true,
+          "position": [
+            0.0,
+            200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 11,
+          "name": "Peg 11",
+          "enabled": true,
+          "position": [
+            80.0,
+            200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 12,
+          "name": "Peg 12",
+          "enabled": true,
+          "position": [
+            -120.0,
+            150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 13,
+          "name": "Peg 13",
+          "enabled": true,
+          "position": [
+            -40.0,
+            150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 14,
+          "name": "Peg 14",
+          "enabled": true,
+          "position": [
+            40.0,
+            150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 15,
+          "name": "Peg 15",
+          "enabled": true,
+          "position": [
+            120.0,
+            150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 16,
+          "name": "Peg 16",
+          "enabled": true,
+          "position": [
+            -140.0,
+            50.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 17,
+          "name": "Peg 17",
+          "enabled": true,
+          "position": [
+            -60.0,
+            50.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 18,
+          "name": "Peg 18",
+          "enabled": true,
+          "position": [
+            60.0,
+            50.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 19,
+          "name": "Peg 19",
+          "enabled": true,
+          "position": [
+            140.0,
+            50.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 20,
+          "name": "Peg 20",
+          "enabled": true,
+          "position": [
+            -100.0,
+            0.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 21,
+          "name": "Peg 21",
+          "enabled": true,
+          "position": [
+            -20.0,
+            0.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 22,
+          "name": "Peg 22",
+          "enabled": true,
+          "position": [
+            20.0,
+            0.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 23,
+          "name": "Peg 23",
+          "enabled": true,
+          "position": [
+            100.0,
+            0.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 24,
+          "name": "Peg 24",
+          "enabled": true,
+          "position": [
+            -140.0,
+            -100.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 25,
+          "name": "Peg 25",
+          "enabled": true,
+          "position": [
+            -60.0,
+            -100.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 26,
+          "name": "Peg 26",
+          "enabled": true,
+          "position": [
+            60.0,
+            -100.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 27,
+          "name": "Peg 27",
+          "enabled": true,
+          "position": [
+            140.0,
+            -100.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 28,
+          "name": "Peg 28",
+          "enabled": true,
+          "position": [
+            -100.0,
+            -150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 29,
+          "name": "Peg 29",
+          "enabled": true,
+          "position": [
+            -20.0,
+            -150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 30,
+          "name": "Peg 30",
+          "enabled": true,
+          "position": [
+            20.0,
+            -150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 31,
+          "name": "Peg 31",
+          "enabled": true,
+          "position": [
+            100.0,
+            -150.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 32,
+          "name": "Peg 32",
+          "enabled": true,
+          "position": [
+            -140.0,
+            -200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 33,
+          "name": "Peg 33",
+          "enabled": true,
+          "position": [
+            -60.0,
+            -200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 34,
+          "name": "Peg 34",
+          "enabled": true,
+          "position": [
+            60.0,
+            -200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 35,
+          "name": "Peg 35",
+          "enabled": true,
+          "position": [
+            140.0,
+            -200.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.5,
+            0.5,
+            0.6,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 36,
+          "name": "x2 36",
+          "enabled": true,
+          "position": [
+            -100.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.2,
+            0.8,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 2,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 37,
+          "name": "x2 37",
+          "enabled": true,
+          "position": [
+            100.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.2,
+            0.8,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 2,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 38,
+          "name": "x4 38",
+          "enabled": true,
+          "position": [
+            0.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.8,
+            0.6,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 4,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 39,
+          "name": "x8 39",
+          "enabled": true,
+          "position": [
+            0.0,
+            100.0
+          ],
+          "size": [
+            48.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.2,
+            0.8,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 8,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 40,
+          "name": "Peg 40",
+          "enabled": true,
+          "position": [
+            -140.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 41,
+          "name": "Peg 41",
+          "enabled": true,
+          "position": [
+            -100.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 42,
+          "name": "Peg 42",
+          "enabled": true,
+          "position": [
+            -60.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 43,
+          "name": "Peg 43",
+          "enabled": true,
+          "position": [
+            -20.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 44,
+          "name": "Peg 44",
+          "enabled": true,
+          "position": [
+            20.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 45,
+          "name": "Peg 45",
+          "enabled": true,
+          "position": [
+            60.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 46,
+          "name": "Peg 46",
+          "enabled": true,
+          "position": [
+            100.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 47,
+          "name": "Peg 47",
+          "enabled": true,
+          "position": [
+            140.0,
+            -20.0
+          ],
+          "size": [
+            16.0,
+            16.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.7,
+            0.3,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "peg"
+          }
+        },
+        {
+          "id": 48,
+          "name": "Big Ball 48",
+          "enabled": true,
+          "position": [
+            -142.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.3,
+            0.3,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "big_ball",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 49,
+          "name": "Shield 49",
+          "enabled": true,
+          "position": [
+            -47.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.5,
+            0.9,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "shield",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 50,
+          "name": "MG 50",
+          "enabled": true,
+          "position": [
+            47.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.9,
+            0.3,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "machine_gun",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 51,
+          "name": "CIWS 51",
+          "enabled": true,
+          "position": [
+            142.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.5,
+            0.2,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "ciws",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 52,
+          "name": "Red 52",
+          "enabled": true,
+          "position": [
+            -60.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.9,
+            0.2,
+            0.2,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "red"
+          }
+        },
+        {
+          "id": 53,
+          "name": "Blue 53",
+          "enabled": true,
+          "position": [
+            -20.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.2,
+            0.4,
+            0.9,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "blue"
+          }
+        },
+        {
+          "id": 54,
+          "name": "Green 54",
+          "enabled": true,
+          "position": [
+            20.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.2,
+            0.8,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "green"
+          }
+        },
+        {
+          "id": 55,
+          "name": "Yellow 55",
+          "enabled": true,
+          "position": [
+            60.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.9,
+            0.85,
+            0.2,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "yellow"
+          }
+        }
+      ]
+    },
+    {
+      "id": "zigzag",
+      "name": "Zigzag",
+      "width": 400.0,
+      "height": 800.0,
+      "gravity": [
+        0.0,
+        -490.0
+      ],
+      "marble": {
+        "initial_value": 1000,
+        "restitution": 0.6,
+        "friction": 0.3,
+        "spawn_speed": 50.0,
+        "rescue_speed": 420.0
+      },
+      "objects": [
+        {
+          "id": 1,
+          "name": "Wall 1",
+          "enabled": true,
+          "position": [
+            -200.0,
+            0.0
+          ],
+          "size": [
+            10.0,
+            800.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 2,
+          "name": "Wall 2",
+          "enabled": true,
+          "position": [
+            200.0,
+            0.0
+          ],
+          "size": [
+            10.0,
+            800.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 3,
+          "name": "Wall 3",
+          "enabled": true,
+          "position": [
+            0.0,
+            -400.0
+          ],
+          "size": [
+            400.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 4,
+          "name": "Wall 4",
+          "enabled": true,
+          "position": [
+            0.0,
+            400.0
+          ],
+          "size": [
+            400.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.3,
+            0.4,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 36,
+          "name": "x2 36",
+          "enabled": true,
+          "position": [
+            -100.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.2,
+            0.8,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 2,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 37,
+          "name": "x2 37",
+          "enabled": true,
+          "position": [
+            100.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.2,
+            0.8,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 2,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 38,
+          "name": "x4 38",
+          "enabled": true,
+          "position": [
+            0.0,
+            -50.0
+          ],
+          "size": [
+            80.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.8,
+            0.6,
+            0.2,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 4,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 39,
+          "name": "x8 39",
+          "enabled": true,
+          "position": [
+            0.0,
+            100.0
+          ],
+          "size": [
+            48.0,
+            40.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.2,
+            0.8,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "multiplier",
+            "factor": 8,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 48,
+          "name": "Big Ball 48",
+          "enabled": true,
+          "position": [
+            -142.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.3,
+            0.3,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "big_ball",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 49,
+          "name": "Shield 49",
+          "enabled": true,
+          "position": [
+            -47.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.5,
+            0.9,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "shield",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 50,
+          "name": "MG 50",
+          "enabled": true,
+          "position": [
+            47.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.9,
+            0.3,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "machine_gun",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 51,
+          "name": "CIWS 51",
+          "enabled": true,
+          "position": [
+            142.5,
+            -350.0
+          ],
+          "size": [
+            95.0,
+            80.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.9,
+            0.5,
+            0.2,
+            0.6
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "action",
+            "action": "ciws",
+            "value_scale": 1.0,
+            "reset_position": true
+          }
+        },
+        {
+          "id": 52,
+          "name": "Red 52",
+          "enabled": true,
+          "position": [
+            -60.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.9,
+            0.2,
+            0.2,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "red"
+          }
+        },
+        {
+          "id": 53,
+          "name": "Blue 53",
+          "enabled": true,
+          "position": [
+            -20.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.2,
+            0.4,
+            0.9,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "blue"
+          }
+        },
+        {
+          "id": 54,
+          "name": "Green 54",
+          "enabled": true,
+          "position": [
+            20.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.2,
+            0.8,
+            0.3,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "green"
+          }
+        },
+        {
+          "id": 55,
+          "name": "Yellow 55",
+          "enabled": true,
+          "position": [
+            60.0,
+            350.0
+          ],
+          "size": [
+            12.0,
+            12.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "ellipse",
+          "color": [
+            0.9,
+            0.85,
+            0.2,
+            1.0
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "spawn",
+            "team": "yellow"
+          }
+        },
+        {
+          "id": 56,
+          "name": "Ramp 1",
+          "enabled": true,
+          "position": [
+            -55.0,
+            260.0
+          ],
+          "size": [
+            200.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": -18.0,
+          "shape": "rectangle",
+          "color": [
+            0.5,
+            0.6,
+            0.8,
+            1.0
+          ],
+          "restitution": 0.45,
+          "friction": 0.15,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 57,
+          "name": "Ramp 2",
+          "enabled": true,
+          "position": [
+            55.0,
+            180.0
+          ],
+          "size": [
+            200.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 18.0,
+          "shape": "rectangle",
+          "color": [
+            0.5,
+            0.6,
+            0.8,
+            1.0
+          ],
+          "restitution": 0.45,
+          "friction": 0.15,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 58,
+          "name": "Ramp 3",
+          "enabled": true,
+          "position": [
+            -55.0,
+            20.0
+          ],
+          "size": [
+            200.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": -18.0,
+          "shape": "rectangle",
+          "color": [
+            0.5,
+            0.6,
+            0.8,
+            1.0
+          ],
+          "restitution": 0.45,
+          "friction": 0.15,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 59,
+          "name": "Ramp 4",
+          "enabled": true,
+          "position": [
+            55.0,
+            -120.0
+          ],
+          "size": [
+            200.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 18.0,
+          "shape": "rectangle",
+          "color": [
+            0.5,
+            0.6,
+            0.8,
+            1.0
+          ],
+          "restitution": 0.45,
+          "friction": 0.15,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 60,
+          "name": "Ramp 5",
+          "enabled": true,
+          "position": [
+            -55.0,
+            -220.0
+          ],
+          "size": [
+            200.0,
+            10.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": -18.0,
+          "shape": "rectangle",
+          "color": [
+            0.5,
+            0.6,
+            0.8,
+            1.0
+          ],
+          "restitution": 0.45,
+          "friction": 0.15,
+          "kind": {
+            "type": "wall"
+          }
+        },
+        {
+          "id": 61,
+          "name": "Boost",
+          "enabled": true,
+          "position": [
+            140.0,
+            -210.0
+          ],
+          "size": [
+            40.0,
+            45.0
+          ],
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "shape": "rectangle",
+          "color": [
+            0.3,
+            0.9,
+            0.9,
+            0.5
+          ],
+          "restitution": 0.0,
+          "friction": 0.5,
+          "kind": {
+            "type": "boost",
+            "velocity": [
+              -120.0,
+              200.0
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
